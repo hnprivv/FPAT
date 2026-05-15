@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js FPAT</title>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "/node_modules/three/build/three.module.js",
+            "three/addons/": "/node_modules/three/examples/jsm/"
+        }
+    }
+    </script>
+
+    <link href="styles.css" rel="stylesheet">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <script src="/socket.io/socket.io.js"></script>
+    <script type="module" src="main.js"></script>
+    <div id="crosshair">+</div>
+
+    <div id="sidebar">
+        <div class="inventory-slot">
+            <img src="fist.png" alt="Fist" style="width:28px;height:28px;display:block;margin:auto;" />
+        </div>
+        <div class="inventory-slot">
+            <img src="pistol.png" alt="Pistol" style="width:28px;height:28px;display:block;margin:auto;" />
+        </div>
+        <div class="inventory-slot">
+            <img src="flashlight.png" alt="Flashlight" style="width:28px;height:28px;display:block;margin:auto;" />
+        </div>
+    </div>
+
+    <div id="healthbar-container">
+        <div id="healthbar-bg">
+            <div id="healthbar-fill"></div>
+        </div>
+    </div>
+
+    <div id="stamina-container">
+        <div id="stamina-bg">
+            <div id="stamina-fill"></div>
+        </div>
+
+        <div id="bar-numbers-row">
+            <span id="health-value">100</span>
+            <span id="bar-divider"></span>
+            <span id="stamina-value">100</span>
+        </div>
+    </div>
+
+    <div id="gun-info">
+        <img id="gun-icon" src="pistol.png" alt="Gun Icon"
+            style="width:38px;height:22px;display:block;margin-bottom:2px;" />
+        <div id="ammo-row">
+            <span id="ammo-current">10</span>
+            <span id="ammo-separator">/</span>
+            <span id="ammo-total">∞</span>
+            <span id="ammo-spacer">&nbsp;</span>
+            <span id="gun-type-short">I</span>
+        </div>
+    </div>
+
+    <div id="reload-message">Press R to reload!</div>
+    <div id="stamina-message">Rest to regain stamina!</div>
+
+    <button id="controls-btn">
+        <img src="keyboard.png" alt="Controls" style="width:28px;height:28px;display:block;margin:auto;" />
+    </button>
+
+    <button id="info-btn" style="margin-left:10px;">
+        <img src="info.png" alt="Info" style="width:28px;height:28px;display:block;margin:auto;" />
+    </button>
+
+    <button id="reset-btn" style="margin-left:10px;">
+        <img src="reset.png" alt="Reset" style="width:28px;height:28px;display:block;margin:auto;" />
+    </button>
+
+    <button id="day-night-btn" style="margin-left: 10px;">
+        <img src="night.png" alt="Day" style="width:28px;height:28px;display:block;margin:auto;" />
+    </button>
+
+    <div id="controls-modal">
+        <div id="controls-modal-content">
+            <h2>CONTROLS GUIDE</h2>
+            <table style="width:100%;border-collapse:collapse;">
+                <thead>
+                    <tr>
+                        <th>Function</th>
+                        <th>Keybind</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Move Forward</td>
+                        <td>W</td>
+                    </tr>
+                    <tr>
+                        <td>Move Left</td>
+                        <td>A</td>
+                    </tr>
+                    <tr>
+                        <td>Move Backward</td>
+                        <td>S</td>
+                    </tr>
+                    <tr>
+                        <td>Move Right</td>
+                        <td>D</td>
+                    </tr>
+                    <tr>
+                        <td>Jump</td>
+                        <td>SPACE</td>
+                    </tr>
+                    <tr>
+                        <td>Walk</td>
+                        <td>LEFT SHIFT</td>
+                    </tr>
+                    <tr>
+                        <td>Crouch</td>
+                        <td>C</td>
+                    </tr>
+                    <tr>
+                        <td>Reload</td>
+                        <td>R</td>
+                    </tr>
+                    <tr>
+                        <td>Toggle Flashlight</td>
+                        <td>F</td>
+                    </tr>
+                    <tr>
+                        <td>Fire Weapon</td>
+                        <td>Mouse Left</td>
+                    </tr>
+                    <tr>
+                        <td>Unlock Cursor</td>
+                        <td>ESC</td>
+                    </tr>
+                    <tr>
+                        <td>Open Chat</td>
+                        <td>T</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>Click anywhere to close.</p>
+        </div>
+    </div>
+
+    <div id="info-modal">
+        <div id="info-modal-content">
+            <h2>PROJECT INFO</h2>
+            <p>
+                This project is a modern, browser-based first-person aim trainer built with Three.js.
+                Players can expect immersive movement (running, walking, crouching, jumping), realistic
+                weapon handling (pistol, reloading, muzzle flash, ammo management), and dynamic UI elements
+                (health/stamina bars, inventory sidebar, gun info, reload/stamina messages). The game
+                features sound effects, a controls guide modal, and a sleek interface. <br> Have fun! - Silver
+            </p>
+            <p style="margin-top:10px; font-size:13px; color:#888; text-align: center;">Click anywhere to close.</p>
+        </div>
+    </div>
+
+    <!-- Add this just before </body> in your index.html -->
+    <div id="scoreboard">
+        <div id="scoreboard-title">SCORE</div>
+        <div id="scoreboard-value">0</div>
+        <div id="score-plus">+1</div>
+    </div>
+
+    <div id="loading-overlay" class="visible">
+        <div class="loader-box">
+            <div class="loader-title">LOADING</div>
+            <div class="loader-bar">
+                <div id="loader-fill" class="loader-fill" style="width:0%"></div>
+            </div>
+            <div id="loader-percent" class="loader-percent">0%</div>
+        </div>
+    </div>
+
+    <div id="target-hit-msg" aria-live="polite">Target Hit!</div>
+
+    <div id="death-overlay" style="display:none;">
+        <div id="death-content">
+            <div id="death-title">YOU DIED</div>
+            <div id="respawn-text">Respawning in <span id="respawn-timer">3</span>...</div>
+        </div>
+    </div>
+
+    <div id="chat-panel">
+        <div id="chat-messages"></div>
+        <div id="chat-input-row">
+            <input id="chat-input" type="text" maxlength="80" placeholder="Say something... (Enter to send, Esc to close)" autocomplete="off" />
+            <button id="chat-send-btn">Send</button>
+        </div>
+    </div>
+
+    <div id="lobby-overlay" style="display:none;">
+        <div id="lobby-box">
+            <h1 id="lobby-title">FPAT MULTIPLAYER</h1>
+
+            <div class="lobby-field">
+                <label for="lobby-name-input">Your Name</label>
+                <input id="lobby-name-input" type="text" maxlength="16" placeholder="Enter name..." value="Player" autocomplete="off" />
+            </div>
+
+            <div id="lobby-buttons">
+                <button id="lobby-create-btn" class="lobby-btn lobby-btn-primary">Create Room</button>
+            </div>
+
+            <div id="lobby-join-section" style="display:none;">
+                <button id="lobby-join-btn" class="lobby-btn lobby-btn-primary">Join Room</button>
+            </div>
+
+            <div id="lobby-invite-section" style="display:none;">
+                <label>Invite Link</label>
+                <div id="lobby-invite-row">
+                    <input id="lobby-invite-link" type="text" readonly />
+                    <button id="lobby-copy-btn" class="lobby-btn">Copy</button>
+                </div>
+            </div>
+
+            <div id="lobby-player-count">1 / 4 players</div>
+            <div id="lobby-status"></div>
+
+            <button id="lobby-start-btn" class="lobby-btn lobby-btn-start" style="display:none;">
+                Start Playing
+            </button>
+        </div>
+    </div>
+
+</body>
+
+</html>
