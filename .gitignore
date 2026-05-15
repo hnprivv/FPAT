@@ -1,0 +1,9 @@
+node_modules/
+npm-debug.log
+.env
+*.log
+.claude/
+fps2.blend
+fps2.blend1
+FPAT.docx
+FPAT.pdf
