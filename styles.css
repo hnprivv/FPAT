@@ -158,6 +158,26 @@ canvas {
     user-select: none;
 }
 
+#grenade-info {
+    position: fixed;
+    right: 32px;
+    bottom: 130px;
+    background: rgba(40, 44, 52, 0.85);
+    border-radius: 10px;
+    padding: 6px 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    z-index: 20;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 20px;
+    color: #e2e8f0;
+    transition: opacity 0.3s;
+}
+
+#grenade-icon { display: block; }
+#grenade-count { letter-spacing: 1px; }
+
 #gun-info {
     position: absolute;
     right: 32px;
@@ -451,16 +471,35 @@ canvas {
     background: rgba(220,220,220,0.98);
     border-radius: 16px;
     box-shadow: 0 4px 24px rgba(0,0,0,0.18);
-    padding: 32px 36px;
-    width: 40vw;
-    max-width: 480px;
-    min-width: 260px;
+    width: 44vw;
+    max-width: 540px;
+    min-width: 300px;
+    max-height: 85vh;
+    overflow: hidden;
     color: #23272f;
     font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
     text-align: left;
     display: flex;
     flex-direction: column;
     align-items: center;
+}
+
+#info-modal-header {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 28px 36px 0;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+#info-modal-body {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0 36px 28px;
+    overflow-y: auto;
+    flex: 1;
 }
 
 #info-modal-content h2 {
@@ -479,6 +518,54 @@ canvas {
     text-align: justify;
     width: 100%;
     font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
+}
+
+#info-must-read {
+    background: #c0392b;
+    color: #fff;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 13px;
+    letter-spacing: 2px;
+    padding: 3px 12px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+    align-self: center;
+}
+
+.info-section {
+    width: 100%;
+    margin-bottom: 12px;
+}
+
+.info-section-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 13px;
+    letter-spacing: 1.5px;
+    color: #555;
+    margin-bottom: 3px;
+}
+
+#info-modal-content kbd {
+    background: #ddd;
+    border: 1px solid #aaa;
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 12px;
+    font-family: monospace;
+    color: #23272f;
+}
+
+.info-hs        { color: #c0392b; font-weight: 700; }
+.info-body      { color: #9a6f00; font-weight: 700; }
+.info-triple    { color: #9a7000; font-weight: 700; }
+.info-rampage   { color: #c0392b; font-weight: 700; }
+.info-unstoppable { color: #8e44ad; font-weight: 700; }
+
+.info-footer {
+    margin-top: 8px !important;
+    font-size: 13px !important;
+    color: #888 !important;
+    text-align: center !important;
 }
 
 #reset-btn {
@@ -525,6 +612,128 @@ canvas {
 #day-night-btn:hover {
     border-color: #38a169;
     background: rgba(60, 60, 60, 1);
+}
+
+#multiplayer-btn {
+    position: absolute;
+    top: 32px;
+    right: 282px;
+    width: 40px;
+    height: 40px;
+    background: rgba(60, 60, 60, 1);
+    border: 2px solid #555;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-sizing: border-box;
+    z-index: 50;
+    padding: 0;
+    transition: border 0.2s, background 0.2s;
+}
+#multiplayer-btn:hover {
+    border-color: #38a169;
+    background: rgba(60, 60, 60, 1);
+}
+
+#volume-btn {
+    position: absolute;
+    top: 32px;
+    right: 232px;
+    width: 40px;
+    height: 40px;
+    background: rgba(60, 60, 60, 1);
+    border: 2px solid #555;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-sizing: border-box;
+    z-index: 50;
+    padding: 0;
+    transition: border 0.2s, background 0.2s;
+}
+#volume-btn:hover {
+    border-color: #38a169;
+    background: rgba(60, 60, 60, 1);
+}
+
+#volume-modal {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(30,34,44,0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+#volume-modal.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+#volume-modal-content {
+    background: rgba(220,220,220,0.98);
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.18);
+    padding: 32px 36px;
+    min-width: 320px;
+    max-width: 90vw;
+    color: #23272f;
+    font-family: 'Segoe UI', 'Arial', sans-serif;
+}
+
+#volume-modal-content h2 {
+    margin-top: 0;
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 20px;
+    letter-spacing: 1px;
+    text-align: center;
+    font-family: 'Bebas Neue', sans-serif;
+}
+
+#volume-modal-content p {
+    margin-top: 18px;
+    font-size: 13px;
+    color: #888;
+    text-align: center;
+}
+
+.volume-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 12px 0;
+}
+
+.volume-row label {
+    width: 90px;
+    font-weight: 600;
+    font-size: 14px;
+    color: #23272f;
+    flex-shrink: 0;
+}
+
+.volume-row input[type="range"] {
+    flex: 1;
+    accent-color: #38a169;
+    height: 4px;
+    cursor: pointer;
+}
+
+.volume-row span {
+    width: 38px;
+    text-align: right;
+    font-size: 13px;
+    color: #555;
+    font-variant-numeric: tabular-nums;
 }
 
 #scoreboard {
@@ -726,12 +935,20 @@ canvas {
 #lobby-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(8, 10, 14, 0.97);
+    background: rgba(30, 34, 44, 0.78);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 9999;
     font-family: 'Segoe UI', Arial, sans-serif;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+#lobby-overlay.visible {
+    opacity: 1;
+    pointer-events: auto;
 }
 
 #lobby-box {
@@ -747,13 +964,36 @@ canvas {
     gap: 16px;
 }
 
+#lobby-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+}
+
 #lobby-title {
     font-family: 'Bebas Neue', sans-serif;
-    font-size: 32px;
+    font-size: 28px;
     color: #fff;
-    margin: 0 0 8px;
+    margin: 0;
     letter-spacing: 3px;
-    text-align: center;
+}
+
+#lobby-close-btn {
+    background: none;
+    border: none;
+    color: #718096;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: color 0.2s, background 0.2s;
+}
+
+#lobby-close-btn:hover {
+    color: #e2e8f0;
+    background: rgba(255, 255, 255, 0.1);
 }
 
 .lobby-field {
@@ -772,7 +1012,8 @@ canvas {
 }
 
 #lobby-name-input,
-#lobby-invite-link {
+#lobby-invite-link,
+#lobby-room-name-input {
     background: rgba(20, 22, 28, 0.9);
     border: 1.5px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px;
@@ -870,10 +1111,175 @@ canvas {
     flex: 1;
 }
 
+/* ---- Lobby tabs ---- */
+#lobby-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lobby-tab {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: #718096;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 15px;
+    letter-spacing: 1.5px;
+    padding: 8px 18px;
+    margin-bottom: -1px;
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s;
+}
+
+.lobby-tab:hover {
+    color: #e2e8f0;
+}
+
+.lobby-tab.active {
+    color: #68d391;
+    border-bottom-color: #38a169;
+}
+
+/* ---- Connect tab ---- */
+#lobby-tab-connect {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
 #lobby-buttons {
     display: flex;
     flex-direction: column;
     gap: 10px;
+}
+
+/* ---- Public Rooms tab ---- */
+#lobby-tab-rooms {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+#rooms-list-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+#rooms-refresh-btn {
+    font-size: 12px;
+    padding: 5px 12px;
+}
+
+#rooms-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 190px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #2d3748 transparent;
+}
+
+.room-entry {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(20, 22, 28, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    padding: 10px 14px;
+    gap: 12px;
+}
+
+.room-entry-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.room-entry-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: #e2e8f0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.room-entry-count {
+    font-size: 11px;
+    color: #718096;
+    letter-spacing: 0.5px;
+}
+
+.room-entry-join {
+    font-size: 12px;
+    padding: 6px 14px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.room-entry-full {
+    font-size: 12px;
+    padding: 6px 14px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    color: #4a5568;
+    font-weight: 600;
+    font-family: 'Segoe UI', Arial, sans-serif;
+}
+
+#rooms-empty {
+    text-align: center;
+    color: #4a5568;
+    font-size: 13px;
+    padding: 24px 0;
+}
+
+#lobby-join-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.lobby-section-label {
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    color: #718096;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+#lobby-join-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+}
+
+#lobby-join-link-input {
+    flex: 1;
+    background: rgba(20, 22, 28, 0.9);
+    border: 1.5px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    color: #e2e8f0;
+    font-size: 13px;
+    padding: 10px 14px;
+    outline: none;
+    box-sizing: border-box;
+    font-family: inherit;
+    transition: border-color 0.2s;
+}
+
+#lobby-join-link-input:focus {
+    border-color: #38a169;
+}
+
+#lobby-join-link-input::placeholder {
+    color: #4a5568;
+    font-size: 12px;
 }
 
 #lobby-player-count {
@@ -987,6 +1393,102 @@ canvas {
     background: #2f855a;
 }
 
+/* ---- Leaderboard ---- */
+#leaderboard-overlay {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(8, 10, 14, 0.93);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 14px;
+    padding: 28px 36px;
+    min-width: 460px;
+    z-index: 7000;
+    display: none;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    color: #e2e8f0;
+    pointer-events: none;
+    backdrop-filter: blur(6px);
+}
+
+#leaderboard-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 28px;
+    letter-spacing: 6px;
+    text-align: center;
+    margin-bottom: 20px;
+    color: #fff;
+}
+
+#leaderboard-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+#leaderboard-table thead th {
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: #4a5568;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 0 14px 10px;
+    text-align: left;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+#leaderboard-table thead th:nth-child(n+3) {
+    text-align: center;
+}
+
+#leaderboard-table tbody td {
+    padding: 9px 14px;
+    font-size: 14px;
+}
+
+.lb-row-local td {
+    background: rgba(56, 161, 105, 0.1);
+}
+
+.lb-rank {
+    color: #4a5568;
+    font-size: 12px;
+    width: 28px;
+}
+
+.lb-kills { color: #68d391; font-weight: 700; text-align: center; }
+.lb-deaths { color: #fc8181; text-align: center; }
+.lb-kd { color: #e2e8f0; font-weight: 600; text-align: center; }
+
+/* ---- Kill streak announcement ---- */
+#streak-announcement {
+    position: fixed;
+    top: 35%;
+    left: 50%;
+    transform: translateX(-50%) scale(0);
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 72px;
+    letter-spacing: 8px;
+    text-shadow: 0 0 40px currentColor, 3px 3px 0 #000, -3px 3px 0 #000, 3px -3px 0 #000, -3px -3px 0 #000;
+    z-index: 9000;
+    pointer-events: none;
+    opacity: 0;
+    user-select: none;
+    white-space: nowrap;
+}
+
+#streak-announcement.streak-active {
+    animation: streak-pop 2.4s ease forwards;
+}
+
+@keyframes streak-pop {
+    0%   { opacity: 0; transform: translateX(-50%) scale(0.3); }
+    12%  { opacity: 1; transform: translateX(-50%) scale(1.18); }
+    22%  { transform: translateX(-50%) scale(1.0); }
+    70%  { opacity: 1; transform: translateX(-50%) scale(1.0); }
+    100% { opacity: 0; transform: translateX(-50%) scale(0.85); }
+}
+
 /* ---- Kill feed ---- */
 #kill-feed {
     position: fixed;
@@ -1024,13 +1526,13 @@ canvas {
     100% { opacity: 0; }
 }
 
-/* ---- Cartoon hit popups ---- */
+/* ---- Damage number popups ---- */
 .hit-popup {
     position: fixed;
     font-family: 'Bebas Neue', sans-serif;
-    font-size: 38px;
-    color: #ffd700;
-    text-shadow: 2px 2px 0 #000, -2px 2px 0 #000, 2px -2px 0 #000, -2px -2px 0 #000;
+    font-size: 34px;
+    color: #ff4c4c;
+    text-shadow: 1px 1px 0 #000, -1px 1px 0 #000, 1px -1px 0 #000, -1px -1px 0 #000, 0 2px 8px rgba(0,0,0,0.9);
     pointer-events: none;
     z-index: 5000;
     transform: translate(-50%, -50%);
@@ -1040,8 +1542,8 @@ canvas {
 }
 
 @keyframes hit-popup-anim {
-    0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.4); }
-    15%  { opacity: 1; transform: translate(-50%, -50%) scale(1.3); }
-    50%  { opacity: 1; transform: translate(-50%, -75%) scale(1.0); }
-    100% { opacity: 0; transform: translate(-50%, -115%) scale(0.8); }
+    0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+    12%  { opacity: 1; transform: translate(-50%, -50%) scale(1.2); }
+    50%  { opacity: 1; transform: translate(-50%, -80%) scale(1.0); }
+    100% { opacity: 0; transform: translate(-50%, -130%) scale(0.85); }
 }
