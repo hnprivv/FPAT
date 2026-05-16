@@ -180,7 +180,7 @@
                     </tr>
                     <tr>
                         <td>Open Chat</td>
-                        <td>T</td>
+                        <td>ENTER</td>
                     </tr>
                     <tr>
                         <td>Melee Attack</td>
@@ -189,6 +189,10 @@
                     <tr>
                         <td>Throw Grenade</td>
                         <td>G</td>
+                    </tr>
+                    <tr>
+                        <td>Plant / Defuse (S&D)</td>
+                        <td>E (hold)</td>
                     </tr>
                     <tr>
                         <td>Leaderboard</td>
@@ -226,7 +230,7 @@
 
                 <div class="info-section">
                     <div class="info-section-title">MULTIPLAYER</div>
-                    <p>Click <strong>🌐</strong> to open the lobby. Create a named room and share the invite link, paste a link or room code to join a friend, or browse <strong>Public Rooms</strong> for open sessions. Hold <kbd>TAB</kbd> for the live leaderboard and press <kbd>T</kbd> to open chat.</p>
+                    <p>Click <strong>🌐</strong> to open the lobby. Create a named room and share the invite link, paste a link or room code to join a friend, or browse <strong>Public Rooms</strong> for open sessions. Hold <kbd>TAB</kbd> for the live leaderboard and press <kbd>ENTER</kbd> to open chat.</p>
                 </div>
 
                 <div class="info-section">
@@ -286,6 +290,51 @@
         </table>
     </div>
 
+    <!-- SND team badge (below health/stamina) -->
+    <div id="snd-team-badge" style="display:none;">ATTACKER</div>
+
+    <!-- SND top-center timer + score -->
+    <div id="snd-timer-display" style="display:none;">
+        <div id="snd-timer-value">5:00</div>
+        <div id="snd-round-display">ROUND 1</div>
+        <div id="snd-score-display">0 — 0</div>
+    </div>
+
+    <div id="snd-plant-prompt" style="display:none;">Press and Hold E to plant the bomb.</div>
+    <div id="snd-defuse-prompt" style="display:none;">Press and Hold E to defuse.</div>
+
+    <div id="snd-action-container" style="display:none;">
+        <div id="snd-action-text">Planting...</div>
+        <div id="snd-action-bar"><div id="snd-action-bar-fill"></div></div>
+    </div>
+
+    <div id="snd-spectate-overlay" style="display:none;">
+        <div id="snd-spectate-text">YOU ARE DEAD</div>
+        <div id="snd-spectate-sub">Free look — WASD to move</div>
+    </div>
+
+    <div id="snd-round-start-overlay" style="display:none;">
+        <div id="snd-round-start-text">ROUND 1</div>
+        <div id="snd-round-start-sub">ATTACKING</div>
+        <div id="snd-round-start-bomb" style="display:none;">You have the bomb!</div>
+    </div>
+
+    <div id="snd-round-end-overlay" style="display:none;">
+        <div id="snd-round-winner">ATTACKERS WIN</div>
+        <div id="snd-round-reason">Elimination</div>
+        <div id="snd-round-score-display">0 — 0</div>
+    </div>
+
+    <div id="snd-match-end-overlay" style="display:none;">
+        <div id="snd-match-winner">ATTACKERS WIN</div>
+        <div id="snd-match-score">3 — 1</div>
+        <div id="snd-match-actions" style="display:none;">
+            <button id="snd-rematch-btn" class="snd-match-btn snd-rematch-btn-style">Rematch</button>
+            <button id="snd-quit-btn" class="snd-match-btn snd-quit-btn-style">Quit</button>
+        </div>
+        <div id="snd-match-waiting" style="display:none;">Waiting for host...</div>
+    </div>
+
     <div id="streak-announcement"></div>
 
     <div id="kill-feed"></div>
@@ -321,6 +370,13 @@
                     <div class="lobby-field">
                         <label for="lobby-room-name-input">Room Name</label>
                         <input id="lobby-room-name-input" type="text" maxlength="32" placeholder="Name your room..." autocomplete="off" />
+                    </div>
+                    <div class="lobby-field">
+                        <label for="lobby-mode-select">Game Mode</label>
+                        <select id="lobby-mode-select">
+                            <option value="ffa">Free for All</option>
+                            <option value="snd">Search &amp; Destroy</option>
+                        </select>
                     </div>
                     <button id="lobby-create-btn" class="lobby-btn lobby-btn-primary">Create Room</button>
                 </div>
