@@ -1,7 +1,7 @@
 import * as THREE from "./node_modules/three/build/three.module.js";
 import { GLTFLoader } from './node_modules/three/examples/jsm/loaders/GLTFLoader.js';
 import { EXRLoader } from './node_modules/three/examples/jsm/loaders/EXRLoader.js';
-import { initNetwork, broadcastState, broadcastShoot, broadcastPlayerHit, broadcastDeath, broadcastRespawn, getRemotePlayerHit, updateRemotePlayers, initRemoteAudio, getLeaderboardData, getRemotePlayerPositions, setRemoteFootstepVolume, setWallBoxes, broadcastGrenadeThrow, getPlayersInRange } from './network.js';
+import { initNetwork, broadcastState, broadcastShoot, broadcastPlayerHit, broadcastDeath, broadcastRespawn, broadcastBombPlanted, broadcastBombDefused, broadcastBombPlantingStart, broadcastBombPlantingStop, broadcastSndRematch, broadcastSndQuit, getMyPlayerId, getRemotePlayerHit, updateRemotePlayers, initRemoteAudio, getLeaderboardData, getRemotePlayerPositions, setRemoteFootstepVolume, setWallBoxes, broadcastGrenadeThrow, getPlayersInRange } from './network.js';
 
 // Asset loading manager
 const loadingManager = new THREE.LoadingManager();
@@ -146,6 +146,24 @@ window.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // SND Rematch / Quit buttons
+    const sndRematchBtn = document.getElementById('snd-rematch-btn');
+    const sndQuitBtn    = document.getElementById('snd-quit-btn');
+    if (sndRematchBtn) {
+        sndRematchBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            sndRematchBtn.disabled = true;
+            if (sndQuitBtn) sndQuitBtn.disabled = true;
+            broadcastSndRematch();
+        });
+    }
+    if (sndQuitBtn) {
+        sndQuitBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            broadcastSndQuit();
+        });
+    }
+
     // Score reset button
     const scoreResetBtn = document.getElementById('reset-btn');
     if (scoreResetBtn) {
@@ -251,6 +269,7 @@ document.body.appendChild(renderer.domElement);
 // Scene and camera
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+window.camera = camera;
 
 // Controls
 const controls = new FPSControls(camera, renderer.domElement);
@@ -347,6 +366,39 @@ function pickSpawnPoint() {
 let killStreak = 0;
 let gunVolume = 1.0;
 
+// ---- SND constants ----
+const SND_SITE = { minX: -23.534, maxX: -8.552, minZ: 17.675, maxZ: 30.365 };
+const ATTACKER_SPAWNS = [
+    new THREE.Vector3(6.14,  2, -13.79),
+    new THREE.Vector3(-2.25, 2, -15.21),
+];
+const DEFENDER_SPAWNS = [
+    new THREE.Vector3(25.45, 2, 29.01),
+    new THREE.Vector3(25.49, 2, 17.17),
+];
+const PLANT_DURATION  = 7;
+const DEFUSE_DURATION = 12;
+
+// ---- SND state ----
+let sndMode         = false;
+let myTeam          = null;     // 'attacker' | 'defender'
+let hasBomb         = false;
+let isSpectating    = false;
+let sndPhase        = 'waiting';
+let bombWorldPos    = null;
+let bombMesh        = null;
+let sndRound        = 0;
+let sndAttackerScore = 0;
+let sndDefenderScore = 0;
+let isPlanting      = false;
+let isDefusing      = false;
+let plantTimer      = 0;
+let defuseTimer     = 0;
+let _sndRoundStartTimeout = null;
+let _sndRoundEndTimeout   = null;
+let _bombBeepTimeout      = null;
+let _bombSecondsLeft      = 50;
+
 // ---- Grenade constants ----
 const GRENADE_MAX        = 2;
 const GRENADE_FUSE       = 3.0;
@@ -406,6 +458,16 @@ function onKeyDown(event) {
         case 'KeyG':
             throwGrenade();
             break;
+        case 'KeyE':
+            if (sndMode && !isDead) {
+                if (sndPhase === 'active' && hasBomb && isInSite() && !isDefusing) {
+                    isPlanting = true;
+                    broadcastBombPlantingStart(camera.position);
+                    startPlantingSound(camera.position);
+                }
+                if (sndPhase === 'planted' && myTeam === 'defender' && isNearBomb() && !isPlanting) isDefusing = true;
+            }
+            break;
         case 'KeyF':
             slot3Active = !slot3Active;
             const slot3 = document.querySelectorAll('.inventory-slot')[2];
@@ -448,7 +510,7 @@ function onKeyDown(event) {
                 if (stamina < 0) stamina = 0;
             }
             break;
-        case 'KeyT':
+        case 'Enter':
             if (gameActive) {
                 event.preventDefault();
                 controls.unlock();
@@ -472,6 +534,19 @@ function onKeyUp(event) {
         case 'ShiftLeft':
             isWalking = false;
             shiftPressed = false;
+            break;
+        case 'KeyE':
+            if (isPlanting || isDefusing) {
+                if (isPlanting) {
+                    broadcastBombPlantingStop();
+                    stopPlantingSound();
+                }
+                isPlanting = false;
+                isDefusing = false;
+                plantTimer = 0;
+                defuseTimer = 0;
+                updateSndProgressBar(false, 0, 0);
+            }
             break;
     }
 }
@@ -850,6 +925,34 @@ document.addEventListener('remote-gunshot', (e) => {
 // Remote player explosion sound (positional — spatialized at the exploding model)
 let explosionBuffer = null;
 audioLoader.load('deltarune-explosion.mp3', (buffer) => { explosionBuffer = buffer; });
+
+// ---- SND voice lines (loaded outside loading manager so they don't delay the loading screen) ----
+const sndVoiceLoader          = new THREE.AudioLoader();
+const sndVoiceYouHaveTheBomb  = new THREE.Audio(listener);
+const sndVoiceAttackerIntro   = new THREE.Audio(listener);
+const sndVoiceDefenderIntro   = new THREE.Audio(listener);
+const sndVoiceAttackersWin    = new THREE.Audio(listener);
+const sndVoiceBombPlanted     = new THREE.Audio(listener);
+const sndVoiceDefendersWin    = [new THREE.Audio(listener), new THREE.Audio(listener)];
+const sndBombBeep             = new THREE.PositionalAudio(listener);
+sndBombBeep.setRefDistance(8);
+
+const plantingAudioObj        = new THREE.Object3D();
+scene.add(plantingAudioObj);
+const sndBombPlanting         = new THREE.PositionalAudio(listener);
+sndBombPlanting.setRefDistance(8);
+sndBombPlanting.setLoop(true);
+plantingAudioObj.add(sndBombPlanting);
+
+sndVoiceLoader.load('you-have-the-bomb.wav',    b => { sndVoiceYouHaveTheBomb.setBuffer(b); });
+sndVoiceLoader.load('attacker-intro.wav',        b => { sndVoiceAttackerIntro.setBuffer(b); });
+sndVoiceLoader.load('defenders-intro.wav',       b => { sndVoiceDefenderIntro.setBuffer(b); });
+sndVoiceLoader.load('attackers-win.wav',         b => { sndVoiceAttackersWin.setBuffer(b); });
+sndVoiceLoader.load('bomb-has-been-planted.wav', b => { sndVoiceBombPlanted.setBuffer(b); });
+sndVoiceLoader.load('bomb-defused.wav',          b => { sndVoiceDefendersWin[0].setBuffer(b); });
+sndVoiceLoader.load('defenders-win.wav',         b => { sndVoiceDefendersWin[1].setBuffer(b); });
+sndVoiceLoader.load('bomb-beep.mp3',             b => { sndBombBeep.setBuffer(b); });
+sndVoiceLoader.load('bomb-planting.mp3',         b => { sndBombPlanting.setBuffer(b); });
 document.addEventListener('player-exploded', (e) => {
     if (!explosionBuffer) return;
     const sound = new THREE.PositionalAudio(listener);
@@ -1359,6 +1462,22 @@ function triggerDeath() {
     controls.unlock();
     broadcastDeath(lastHitBy);
     lastHitBy = null;
+    isPlanting = false;
+    isDefusing = false;
+    plantTimer = 0;
+    defuseTimer = 0;
+    updateSndProgressBar(false, 0, 0);
+
+    if (sndMode) {
+        isSpectating = true;
+        const spectateEl = document.getElementById('snd-spectate-overlay');
+        if (spectateEl) spectateEl.style.display = 'flex';
+        const plantEl  = document.getElementById('snd-plant-prompt');
+        const defuseEl = document.getElementById('snd-defuse-prompt');
+        if (plantEl)  plantEl.style.display  = 'none';
+        if (defuseEl) defuseEl.style.display = 'none';
+        return;
+    }
 
     const overlay = document.getElementById('death-overlay');
     if (overlay) overlay.style.display = 'flex';
@@ -1398,6 +1517,342 @@ function respawn() {
     if (overlay) overlay.style.display = 'none';
 }
 
+// ===== SND helpers =====
+function playSndVoice(sound) {
+    if (!sound?.buffer) return;
+    if (sound.isPlaying) sound.stop();
+    sound.play();
+}
+
+function startBombBeep() {
+    stopBombBeep();
+    function tick() {
+        if (sndPhase !== 'planted') return;
+        if (sndBombBeep.buffer) {
+            if (sndBombBeep.isPlaying) sndBombBeep.stop();
+            sndBombBeep.play();
+        }
+        // Interval shrinks linearly from 1000ms at 50s left to 150ms at ~7.5s left
+        const interval = Math.max(150, 1000 * (_bombSecondsLeft / 50));
+        _bombBeepTimeout = setTimeout(tick, interval);
+    }
+    tick();
+}
+
+function stopBombBeep() {
+    if (_bombBeepTimeout) { clearTimeout(_bombBeepTimeout); _bombBeepTimeout = null; }
+    if (sndBombBeep.isPlaying) sndBombBeep.stop();
+}
+
+function startPlantingSound(position) {
+    plantingAudioObj.position.set(position.x, position.y, position.z);
+    if (sndBombPlanting.buffer && !sndBombPlanting.isPlaying) sndBombPlanting.play();
+}
+
+function stopPlantingSound() {
+    if (sndBombPlanting.isPlaying) sndBombPlanting.stop();
+}
+
+function isInSite() {
+    const p = camera.position;
+    return p.x >= SND_SITE.minX && p.x <= SND_SITE.maxX &&
+           p.z >= SND_SITE.minZ && p.z <= SND_SITE.maxZ;
+}
+
+function isNearBomb() {
+    if (!bombWorldPos) return false;
+    const dx = camera.position.x - bombWorldPos.x;
+    const dz = camera.position.z - bombWorldPos.z;
+    return Math.sqrt(dx * dx + dz * dz) < 2.5;
+}
+
+function spawnPlantedBomb(position) {
+    if (bombMesh) { scene.remove(bombMesh); bombMesh = null; }
+    const floorY = Math.max(0.18, position.y - 1.9);
+    const geo = new THREE.SphereGeometry(0.18, 10, 10);
+    const mat = new THREE.MeshLambertMaterial({ color: 0xff3300 });
+    bombMesh = new THREE.Mesh(geo, mat);
+    bombMesh.castShadow = true;
+    bombMesh.position.set(position.x, floorY, position.z);
+    bombMesh.add(sndBombBeep);
+    scene.add(bombMesh);
+    bombWorldPos = bombMesh.position.clone();
+}
+
+function removePlantedBomb() {
+    if (sndBombBeep.parent) sndBombBeep.parent.remove(sndBombBeep);
+    if (bombMesh) { scene.remove(bombMesh); bombMesh.geometry.dispose(); bombMesh.material.dispose(); bombMesh = null; }
+    bombWorldPos = null;
+}
+
+// ===== SND UI =====
+function updateSndHud() {
+    const badge        = document.getElementById('snd-team-badge');
+    const timerDisp    = document.getElementById('snd-timer-display');
+    const scoreDispEl  = document.getElementById('snd-score-display');
+    const roundDispEl  = document.getElementById('snd-round-display');
+    const show = sndMode && sndPhase !== 'match-end';
+
+    if (badge) {
+        badge.style.display = show ? 'block' : 'none';
+        badge.textContent   = myTeam === 'attacker' ? 'ATTACKER' : 'DEFENDER';
+        badge.className     = myTeam === 'attacker' ? 'attacker' : 'defender';
+    }
+    if (timerDisp)   timerDisp.style.display  = show ? 'block' : 'none';
+    if (roundDispEl) roundDispEl.textContent  = `ROUND ${sndRound}`;
+    if (scoreDispEl) scoreDispEl.textContent  = `${sndAttackerScore} — ${sndDefenderScore}`;
+}
+
+function updateSndTimer(roundSec, bombSec) {
+    const timerEl = document.getElementById('snd-timer-value');
+    if (!timerEl) return;
+    if (bombSec !== null && bombSec !== undefined) {
+        const m = Math.floor(bombSec / 60);
+        const s = bombSec % 60;
+        timerEl.textContent = m > 0
+            ? `BOMB  ${m}:${String(s).padStart(2, '0')}`
+            : `BOMB  ${s}s`;
+        timerEl.style.color = bombSec <= 20 ? '#fc8181' : '#f6e05e';
+    } else if (roundSec !== null && roundSec !== undefined) {
+        const m = Math.floor(roundSec / 60);
+        const s = roundSec % 60;
+        timerEl.textContent = `${m}:${String(s).padStart(2, '0')}`;
+        timerEl.style.color = roundSec <= 30 ? '#fc8181' : '#fff';
+    }
+}
+
+function updateSndProgressBar(active, current, total) {
+    const container = document.getElementById('snd-action-container');
+    const fill      = document.getElementById('snd-action-bar-fill');
+    const text      = document.getElementById('snd-action-text');
+    if (!container || !fill) return;
+    if (!active) { container.style.display = 'none'; return; }
+    container.style.display = 'flex';
+    fill.style.width = `${Math.min(1, current / total) * 100}%`;
+    if (text) text.textContent = isPlanting ? 'Planting...' : 'Defusing...';
+}
+
+function updateSndPrompt() {
+    const plantEl  = document.getElementById('snd-plant-prompt');
+    const defuseEl = document.getElementById('snd-defuse-prompt');
+    const showPlant  = sndMode && hasBomb && sndPhase === 'active'  && isInSite()  && !isPlanting;
+    const showDefuse = sndMode && myTeam === 'defender' && sndPhase === 'planted' && isNearBomb() && !isDefusing;
+    if (plantEl)  plantEl.style.display  = showPlant  ? 'block' : 'none';
+    if (defuseEl) defuseEl.style.display = showDefuse ? 'block' : 'none';
+}
+
+
+function showSndRoundStartOverlay(round, team, bombCarrier) {
+    const overlay  = document.getElementById('snd-round-start-overlay');
+    const text     = document.getElementById('snd-round-start-text');
+    const sub      = document.getElementById('snd-round-start-sub');
+    const bombLine = document.getElementById('snd-round-start-bomb');
+    if (!overlay) return;
+    if (text)     text.textContent       = `ROUND ${round}`;
+    if (sub)      sub.textContent        = team === 'attacker' ? 'ATTACKING' : 'DEFENDING';
+    if (bombLine) bombLine.style.display = bombCarrier ? 'block' : 'none';
+    overlay.style.display = 'flex';
+    if (_sndRoundStartTimeout) clearTimeout(_sndRoundStartTimeout);
+    _sndRoundStartTimeout = setTimeout(() => { overlay.style.display = 'none'; }, 3000);
+}
+
+function showSndRoundEndOverlay(winner, reason, aScore, dScore) {
+    const overlay   = document.getElementById('snd-round-end-overlay');
+    const winnerEl  = document.getElementById('snd-round-winner');
+    const reasonEl  = document.getElementById('snd-round-reason');
+    const scoreEl   = document.getElementById('snd-round-score-display');
+    if (!overlay) return;
+    if (winnerEl) winnerEl.textContent = winner === 'attacker' ? 'ATTACKERS WIN' : 'DEFENDERS WIN';
+    const labels = { elimination: 'Elimination', defused: 'Bomb Defused', explosion: 'Bomb Exploded', timeout: 'Time Out' };
+    if (reasonEl) reasonEl.textContent = labels[reason] || reason;
+    if (scoreEl)  scoreEl.textContent  = `${aScore} — ${dScore}`;
+    overlay.style.display = 'flex';
+    if (_sndRoundEndTimeout) clearTimeout(_sndRoundEndTimeout);
+    _sndRoundEndTimeout = setTimeout(() => { overlay.style.display = 'none'; }, 5000);
+}
+
+function showSndMatchEndOverlay(winner, aScore, dScore, isHost) {
+    const overlay    = document.getElementById('snd-match-end-overlay');
+    const winnerEl   = document.getElementById('snd-match-winner');
+    const scoreEl    = document.getElementById('snd-match-score');
+    const actionsEl  = document.getElementById('snd-match-actions');
+    const waitingEl  = document.getElementById('snd-match-waiting');
+    const rematchBtn = document.getElementById('snd-rematch-btn');
+    const quitBtn    = document.getElementById('snd-quit-btn');
+    if (!overlay) return;
+    const labels = { attacker: 'ATTACKERS WIN', defender: 'DEFENDERS WIN', draw: 'DRAW' };
+    if (winnerEl) winnerEl.textContent = labels[winner] || 'MATCH OVER';
+    if (scoreEl)  scoreEl.textContent  = `${aScore} — ${dScore}`;
+    if (actionsEl) actionsEl.style.display = isHost ? 'flex' : 'none';
+    if (waitingEl) waitingEl.style.display = isHost ? 'none' : 'block';
+    if (rematchBtn) rematchBtn.disabled = false;
+    if (quitBtn)    quitBtn.disabled    = false;
+    overlay.style.display = 'flex';
+}
+
+// ===== SND DOM event listeners =====
+document.addEventListener('snd-round-start', e => {
+    const d = e.detail;
+    sndMode          = true;
+    myTeam           = d.myTeam;
+    hasBomb          = d.hasBomb;
+    sndPhase         = 'active';
+    sndRound         = d.round;
+    sndAttackerScore = d.attackerScore;
+    sndDefenderScore = d.defenderScore;
+    isDead           = false;
+    isSpectating     = false;
+    isPlanting       = false;
+    isDefusing       = false;
+    plantTimer       = 0;
+    defuseTimer      = 0;
+    removePlantedBomb();
+
+    const spawns = myTeam === 'attacker' ? ATTACKER_SPAWNS : DEFENDER_SPAWNS;
+    camera.position.copy(spawns[Math.floor(Math.random() * spawns.length)]);
+
+    health = 100;
+    stamina = staminaMax;
+    ammoCurrent = ammoMax;
+    ammoReserve = ammoTotal - ammoMax;
+    grenadeCount = GRENADE_MAX;
+    grenadeRecharge = 0;
+    velocity.set(0, 0, 0);
+    isCrouching = false;
+    isReloading = false;
+
+    setHealthBar(100);
+    setStaminaBar(100);
+    updateAmmoDisplay();
+    updateGrenadeUI();
+    updateSndProgressBar(false, 0, 0);
+
+    const deathEl    = document.getElementById('death-overlay');
+    const spectateEl = document.getElementById('snd-spectate-overlay');
+    const matchEndEl = document.getElementById('snd-match-end-overlay');
+    if (deathEl)    deathEl.style.display    = 'none';
+    if (spectateEl) spectateEl.style.display = 'none';
+    if (matchEndEl) matchEndEl.style.display = 'none';
+
+    broadcastRespawn();
+    updateSndHud();
+    updateSndTimer(300, null); // seed display to 5:00 before first server tick
+
+    if (hasBomb)                    playSndVoice(sndVoiceYouHaveTheBomb);
+    else if (myTeam === 'attacker') playSndVoice(sndVoiceAttackerIntro);
+    else                            playSndVoice(sndVoiceDefenderIntro);
+
+    showSndRoundStartOverlay(d.round, myTeam, hasBomb);
+});
+
+document.addEventListener('snd-round-end', e => {
+    const d = e.detail;
+    sndPhase         = 'round-end';
+    sndAttackerScore = d.attackerScore;
+    sndDefenderScore = d.defenderScore;
+    isPlanting  = false;
+    isDefusing  = false;
+    plantTimer  = 0;
+    defuseTimer = 0;
+    updateSndProgressBar(false, 0, 0);
+    stopPlantingSound();
+    stopBombBeep();
+    if (d.winner === 'attacker') {
+        playSndVoice(sndVoiceAttackersWin);
+    } else {
+        playSndVoice(sndVoiceDefendersWin[Math.floor(Math.random() * sndVoiceDefendersWin.length)]);
+    }
+    updateSndHud();
+    showSndRoundEndOverlay(d.winner, d.reason, d.attackerScore, d.defenderScore);
+});
+
+document.addEventListener('snd-match-end', e => {
+    const d = e.detail;
+    sndPhase = 'match-end';
+    updateSndHud(); // hides badge + timer display (phase is now 'match-end')
+    showSndMatchEndOverlay(d.winner, d.attackerScore, d.defenderScore, d.isHost);
+});
+
+document.addEventListener('snd-timer', e => {
+    const d = e.detail;
+    if (d.bombSeconds !== null && d.bombSeconds !== undefined) _bombSecondsLeft = d.bombSeconds;
+    updateSndTimer(d.roundSeconds, d.bombSeconds);
+});
+
+document.addEventListener('snd-bomb-planting-start', e => {
+    const p = e.detail.position;
+    startPlantingSound(p);
+});
+
+document.addEventListener('snd-bomb-planting-stop', () => {
+    stopPlantingSound();
+});
+
+document.addEventListener('snd-bomb-planted', e => {
+    const d = e.detail;
+    sndPhase = 'planted';
+    hasBomb  = false;
+    _bombSecondsLeft = d.bombSeconds ?? 50;
+    spawnPlantedBomb(d.position);
+    playSndVoice(sndVoiceBombPlanted);
+    stopPlantingSound();
+    startBombBeep();
+    updateSndPrompt();
+});
+
+document.addEventListener('snd-bomb-defused', () => {
+    removePlantedBomb();
+    updateSndPrompt();
+});
+
+document.addEventListener('snd-bomb-exploded', e => {
+    if (bombWorldPos) {
+        spawnGrenadeFlash(bombWorldPos.clone());
+        playGrenadeExplosionSound(bombWorldPos.clone());
+    }
+    removePlantedBomb();
+    updateSndPrompt();
+});
+
+document.addEventListener('snd-quit', () => {
+    sndMode      = false;
+    myTeam       = null;
+    hasBomb      = false;
+    isSpectating = false;
+    sndPhase     = 'waiting';
+    isPlanting   = false;
+    isDefusing   = false;
+    plantTimer   = 0;
+    defuseTimer  = 0;
+    stopPlantingSound();
+    stopBombBeep();
+    removePlantedBomb();
+    updateSndProgressBar(false, 0, 0);
+
+    if (isDead) {
+        isDead = false;
+        health = 100;
+        stamina = staminaMax;
+        ammoCurrent = ammoMax;
+        ammoReserve = ammoTotal - ammoMax;
+        velocity.set(0, 0, 0);
+        controlsObject.position.copy(pickSpawnPoint());
+        setHealthBar(100);
+        setStaminaBar(100);
+        updateAmmoDisplay();
+    }
+
+    const hideIds = [
+        'snd-team-badge', 'snd-timer-display', 'snd-match-end-overlay', 'snd-spectate-overlay',
+        'snd-round-start-overlay', 'snd-round-end-overlay',
+        'snd-plant-prompt', 'snd-defuse-prompt', 'death-overlay',
+    ];
+    hideIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
+});
+
 // Animation loop
 const clock = new THREE.Clock();
 function animate() {
@@ -1406,11 +1861,21 @@ function animate() {
     // Cap delta to prevent huge position jumps when the tab was in the background
     const delta = Math.min(clock.getDelta(), 0.05);
 
-    // While dead: drop camera to floor, keep networking, skip everything else
+    // While dead: spectate (SND) or drop to floor (FFA), keep networking
     if (isDead) {
-        controlsObject.position.y += (0.3 - controlsObject.position.y) * 5 * delta;
-        // Do NOT touch camera.rotation here — any Z rotation corrupts
-        // PointerLockControls' internal Euler and causes a snap on the next mouse move.
+        if (isSpectating) {
+            const spectateSpeed = 9;
+            const camDir = new THREE.Vector3();
+            camera.getWorldDirection(camDir);
+            const camRight = new THREE.Vector3();
+            camRight.setFromMatrixColumn(camera.matrix, 0);
+            if (move.forward)  camera.position.addScaledVector(camDir,   spectateSpeed * delta);
+            if (move.backward) camera.position.addScaledVector(camDir,  -spectateSpeed * delta);
+            if (move.right)    camera.position.addScaledVector(camRight,  spectateSpeed * delta);
+            if (move.left)     camera.position.addScaledVector(camRight, -spectateSpeed * delta);
+        } else {
+            controlsObject.position.y += (0.3 - controlsObject.position.y) * 5 * delta;
+        }
         updateRemotePlayers(delta);
         broadcastState(controlsObject, health);
         renderer.render(scene, camera);
@@ -1693,6 +2158,49 @@ function animate() {
             f.geo.dispose(); f.mat.dispose();
             grenadeFlashes.splice(i, 1);
         }
+    }
+
+    // SND plant / defuse / prompt logic
+    if (sndMode) {
+        if (isPlanting && hasBomb && sndPhase === 'active' && isInSite()) {
+            plantTimer += delta;
+            updateSndProgressBar(true, plantTimer, PLANT_DURATION);
+            if (plantTimer >= PLANT_DURATION) {
+                isPlanting = false;
+                plantTimer = 0;
+                broadcastBombPlantingStop();
+                broadcastBombPlanted(camera.position);
+                updateSndProgressBar(false, 0, 0);
+            }
+        } else if (isPlanting) {
+            isPlanting = false;
+            plantTimer = 0;
+            broadcastBombPlantingStop();
+            stopPlantingSound();
+            updateSndProgressBar(false, 0, 0);
+        }
+
+        if (isDefusing && myTeam === 'defender' && sndPhase === 'planted' && isNearBomb()) {
+            defuseTimer += delta;
+            updateSndProgressBar(true, defuseTimer, DEFUSE_DURATION);
+            if (defuseTimer >= DEFUSE_DURATION) {
+                isDefusing = false;
+                defuseTimer = 0;
+                broadcastBombDefused();
+                updateSndProgressBar(false, 0, 0);
+            }
+        } else if (isDefusing) {
+            isDefusing = false;
+            defuseTimer = 0;
+            updateSndProgressBar(false, 0, 0);
+        }
+
+        if (bombMesh) {
+            const pulse = 1 + Math.sin(performance.now() * 0.005) * 0.08;
+            bombMesh.scale.setScalar(pulse);
+        }
+
+        updateSndPrompt();
     }
 
     // Multiplayer: interpolate remote players and broadcast local state

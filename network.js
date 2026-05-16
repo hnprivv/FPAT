@@ -9,6 +9,8 @@ let onHitReceivedCb = null;
 let threeListener = null;
 let remoteFootstepBuffer = null;
 let pieceWallBoxes = [];
+let amIHost = false;
+let roomMode = 'ffa';
 
 export function setWallBoxes(boxes) { pieceWallBoxes = boxes; }
 
@@ -551,6 +553,38 @@ export function broadcastGrenadeThrow(pos, vel) {
     });
 }
 
+export function broadcastSndRematch() {
+    if (!socket || !currentRoomId) return;
+    socket.emit('snd-rematch');
+}
+
+export function broadcastSndQuit() {
+    if (!socket || !currentRoomId) return;
+    socket.emit('snd-quit');
+}
+
+export function broadcastBombPlanted(position) {
+    if (!socket || !currentRoomId) return;
+    socket.emit('snd-bomb-planted', { position: { x: position.x, y: position.y, z: position.z } });
+}
+
+export function broadcastBombDefused() {
+    if (!socket || !currentRoomId) return;
+    socket.emit('snd-bomb-defused');
+}
+
+export function broadcastBombPlantingStart(position) {
+    if (!socket || !currentRoomId) return;
+    socket.emit('snd-bomb-planting-start', { position: { x: position.x, y: position.y, z: position.z } });
+}
+
+export function broadcastBombPlantingStop() {
+    if (!socket || !currentRoomId) return;
+    socket.emit('snd-bomb-planting-stop');
+}
+
+export function getMyPlayerId() { return myPlayerId; }
+
 export function getPlayersInRange(center, radius) {
     const results = [];
     remotePlayers.forEach((data, id) => {
@@ -671,6 +705,53 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
         document.dispatchEvent(new CustomEvent('remote-grenade-thrown', { detail: { position, velocity } }));
     });
 
+    // ---- SND socket events ----
+    socket.on('snd-round-start', data => {
+        const myTeam = data.teams[myPlayerId];
+        const hasBomb = data.bombHolder === myPlayerId;
+        const lobbyOverlayEl = document.getElementById('lobby-overlay');
+        if (lobbyOverlayEl) lobbyOverlayEl.classList.remove('visible');
+        onGameStart();
+        document.dispatchEvent(new CustomEvent('snd-round-start', { detail: { ...data, myTeam, hasBomb } }));
+    });
+
+    socket.on('snd-round-end', data => {
+        document.dispatchEvent(new CustomEvent('snd-round-end', { detail: data }));
+    });
+
+    socket.on('snd-match-end', data => {
+        document.dispatchEvent(new CustomEvent('snd-match-end', { detail: { ...data, isHost: amIHost } }));
+    });
+
+    socket.on('snd-timer', data => {
+        document.dispatchEvent(new CustomEvent('snd-timer', { detail: data }));
+    });
+
+    socket.on('snd-bomb-planting-start', data => {
+        document.dispatchEvent(new CustomEvent('snd-bomb-planting-start', { detail: data }));
+    });
+
+    socket.on('snd-bomb-planting-stop', () => {
+        document.dispatchEvent(new CustomEvent('snd-bomb-planting-stop'));
+    });
+
+    socket.on('snd-bomb-planted', data => {
+        document.dispatchEvent(new CustomEvent('snd-bomb-planted', { detail: data }));
+    });
+
+    socket.on('snd-bomb-defused', () => {
+        document.dispatchEvent(new CustomEvent('snd-bomb-defused'));
+    });
+
+    socket.on('snd-bomb-exploded', data => {
+        document.dispatchEvent(new CustomEvent('snd-bomb-exploded', { detail: data }));
+    });
+
+    socket.on('snd-quit', () => {
+        resetToSolo();
+        document.dispatchEvent(new CustomEvent('snd-quit'));
+    });
+
     // ---- Lobby UI wiring ----
     const params = new URLSearchParams(window.location.search);
     const roomFromUrl = params.get('room');
@@ -692,12 +773,56 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
         statusEl.style.color = isError ? '#fc8181' : '#68d391';
     }
 
+    function resetToSolo() {
+        remotePlayers.forEach((_, id) => removeRemotePlayer(id));
+        currentRoomId = null;
+        amIHost = false;
+        roomMode = 'ffa';
+        playerStats.clear();
+        playerNames.clear();
+
+        // Hide post-connection elements
+        const inviteSectionEl = document.getElementById('lobby-invite-section');
+        const startBtnEl      = document.getElementById('lobby-start-btn');
+        if (inviteSectionEl)  inviteSectionEl.style.display  = 'none';
+        if (startBtnEl)       startBtnEl.style.display       = 'none';
+        if (playerCountEl)    playerCountEl.style.display    = 'none';
+
+        // Restore pre-connection elements
+        const nameFieldEl  = document.getElementById('lobby-name-field');
+        const tabsEl       = document.getElementById('lobby-tabs');
+        const tabConnectEl = document.getElementById('lobby-tab-connect');
+        const tabRoomsEl   = document.getElementById('lobby-tab-rooms');
+        if (nameFieldEl)  nameFieldEl.style.display  = '';
+        if (tabsEl)       tabsEl.style.display       = '';
+        if (tabConnectEl) tabConnectEl.style.display  = '';
+        if (tabRoomsEl)   tabRoomsEl.style.display    = 'none';
+
+        // Reset active tab highlight to Connect
+        document.querySelectorAll('.lobby-tab').forEach(b => b.classList.remove('active'));
+        const connectTabBtn = document.querySelector('.lobby-tab[data-tab="connect"]');
+        if (connectTabBtn) connectTabBtn.classList.add('active');
+
+        // Clear status and re-enable create button
+        setStatus('');
+        if (createBtn) createBtn.disabled = false;
+    }
+
     function revealInviteAndStart(roomId) {
         const link = `${location.origin}${location.pathname}?room=${roomId}`;
         if (inviteInput) inviteInput.value = link;
         if (inviteSection) inviteSection.style.display = 'flex';
         if (playerCountEl) playerCountEl.style.display = 'block';
-        if (startBtn) startBtn.style.display = 'block';
+        if (startBtn) {
+            startBtn.style.display = 'block';
+            if (amIHost && roomMode === 'snd') {
+                startBtn.textContent = 'Start Match';
+                startBtn.className = 'lobby-btn lobby-btn-start lobby-btn-snd-start';
+            } else {
+                startBtn.textContent = 'Close';
+                startBtn.className = 'lobby-btn lobby-btn-start';
+            }
+        }
         // Swap out the connect UI for the connected state
         const nameFieldEl  = document.getElementById('lobby-name-field');
         const tabsEl       = document.getElementById('lobby-tabs');
@@ -747,9 +872,10 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
             const joinEl = room.isFull
                 ? `<span class="room-entry-full">Full</span>`
                 : `<button class="room-entry-join lobby-btn" data-room-id="${escapeHtml(room.id)}">Join</button>`;
+            const modeBadge = `<span class="room-entry-mode ${room.mode === 'snd' ? 'mode-snd' : 'mode-ffa'}">${room.mode === 'snd' ? 'S&D' : 'FFA'}</span>`;
             entry.innerHTML =
                 `<div class="room-entry-info">` +
-                `<span class="room-entry-name">${escapeHtml(room.name)}</span>` +
+                `<span class="room-entry-name">${escapeHtml(room.name)}</span>${modeBadge}` +
                 `<span class="room-entry-count">${room.playerCount} / ${room.maxPlayers} players</span>` +
                 `</div>${joinEl}`;
             container.appendChild(entry);
@@ -787,10 +913,14 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
             myPlayerId = res.playerId;
             myPlayerName = name;
             currentRoomId = roomId;
+            amIHost = false;
+            roomMode = res.mode || 'ffa';
             playerStats.set(myPlayerId, { kills: 0, deaths: 0 });
             res.existingPlayers?.forEach(addRemotePlayer);
             revealInviteAndStart(roomId);
-            setStatus(`Joined! ${(res.existingPlayers?.length ?? 0) + 1} player(s) in room.`);
+            setStatus(roomMode === 'snd'
+                ? 'Joined! Waiting for host to start the match.'
+                : `Joined! ${(res.existingPlayers?.length ?? 0) + 1} player(s) in room.`);
             refreshPlayerCount();
             appendChatMessage({ system: true, text: `You joined the game` });
         });
@@ -821,16 +951,21 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
             e.stopPropagation();
             const name = nameInput?.value.trim() || 'Player';
             const roomName = document.getElementById('lobby-room-name-input')?.value.trim() || 'Unnamed Room';
+            const mode = document.getElementById('lobby-mode-select')?.value || 'ffa';
             createBtn.disabled = true;
             setStatus('Creating room...');
-            socket.emit('create-room', { name, roomName }, res => {
+            socket.emit('create-room', { name, roomName, mode }, res => {
                 if (res.error) { setStatus(res.error, true); createBtn.disabled = false; return; }
                 myPlayerId = res.playerId;
                 myPlayerName = name;
                 currentRoomId = res.roomId;
+                amIHost = true;
+                roomMode = res.mode || 'ffa';
                 playerStats.set(myPlayerId, { kills: 0, deaths: 0 });
                 revealInviteAndStart(res.roomId);
-                setStatus('Room created! Share the link, then close when ready.');
+                setStatus(roomMode === 'snd'
+                    ? 'Room created! Add players, then press "Start Match".'
+                    : 'Room created! Share the link, then close when ready.');
                 appendChatMessage({ system: true, text: `Room created. Waiting for players...` });
             });
         });
@@ -858,8 +993,14 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
     if (startBtn) {
         startBtn.addEventListener('click', e => {
             e.stopPropagation();
-            if (lobbyOverlayEl) lobbyOverlayEl.classList.remove('visible');
-            onGameStart();
+            if (amIHost && roomMode === 'snd') {
+                socket.emit('snd-start');
+                startBtn.disabled = true;
+                setStatus('Starting match...');
+            } else {
+                if (lobbyOverlayEl) lobbyOverlayEl.classList.remove('visible');
+                onGameStart();
+            }
         });
     }
 }
