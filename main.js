@@ -252,6 +252,9 @@ let spawnPosition = new THREE.Vector3(0, 2, 0);
 let health = 100;
 let healthDepleteTimer = 0;
 let isDead = false;
+let lastHitBy = null;
+let shakeIntensity = 0;
+let shakeAngle = 0;
 let isDay = true;
 let exrTexture = null;
 let wallBoxes = [];
@@ -633,6 +636,7 @@ function shootHandler(event) {
             if (remoteHit) {
                 broadcastPlayerHit(remoteHit.playerId, 25);
                 spawnImpactEffect(remoteHit.intersect);
+                showHitPopup(remoteHit.intersect.point);
             }
         } else {
             emptySound.stop();
@@ -678,6 +682,24 @@ const deathSound = new THREE.Audio(listener);
 audioLoader.load('death.mp3', (buffer) => {
     deathSound.setBuffer(buffer);
     deathSound.setVolume(0.8);
+});
+
+// Remote player explosion sound (positional — spatialized at the exploding model)
+let explosionBuffer = null;
+audioLoader.load('deltarune-explosion.mp3', (buffer) => { explosionBuffer = buffer; });
+document.addEventListener('player-exploded', (e) => {
+    if (!explosionBuffer) return;
+    const sound = new THREE.PositionalAudio(listener);
+    sound.setBuffer(explosionBuffer);
+    sound.setVolume(1.0);
+    sound.setRefDistance(3);
+    sound.setRolloffFactor(1.5);
+    const carrier = new THREE.Object3D();
+    carrier.position.copy(e.detail.position);
+    scene.add(carrier);
+    carrier.add(sound);
+    sound.play();
+    sound.onEnded = () => scene.remove(carrier);
 });
 
 // Crouch sound
@@ -867,6 +889,27 @@ function showScorePlus() {
     }, 1000); // visible for ~1s (matches requested duration)
 }
 
+// Screen shake
+function triggerShake(intensity) {
+    shakeIntensity = Math.max(shakeIntensity, intensity);
+    shakeAngle = Math.random() * Math.PI * 2;
+}
+
+// Cartoon hit popups
+const HIT_WORDS = ['POW!', 'BONK!', 'OOF!', 'WHAM!', 'ZAP!', 'BAM!', 'KAPOW!'];
+function showHitPopup(worldPoint) {
+    const projected = worldPoint.clone().project(camera);
+    const x = (projected.x + 1) / 2 * window.innerWidth;
+    const y = (-projected.y + 1) / 2 * window.innerHeight;
+    const el = document.createElement('div');
+    el.className = 'hit-popup';
+    el.textContent = HIT_WORDS[Math.floor(Math.random() * HIT_WORDS.length)];
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 800);
+}
+
 // Death and respawn
 function triggerDeath() {
     isDead = true;
@@ -876,7 +919,8 @@ function triggerDeath() {
     deathSound.stop();
     deathSound.play();
     controls.unlock();
-    broadcastDeath();
+    broadcastDeath(lastHitBy);
+    lastHitBy = null;
 
     const overlay = document.getElementById('death-overlay');
     if (overlay) overlay.style.display = 'flex';
@@ -1110,6 +1154,14 @@ function animate() {
     updateRemotePlayers(delta);
     broadcastState(controlsObject, health);
 
+    // Screen shake
+    if (shakeIntensity > 0.0005) {
+        camera.rotation.x += Math.cos(shakeAngle) * shakeIntensity;
+        camera.rotation.y += Math.sin(shakeAngle) * shakeIntensity;
+        shakeAngle += 3.5;
+        shakeIntensity *= 0.75;
+    }
+
     renderer.render(scene, camera);
 }
 animate();
@@ -1117,11 +1169,13 @@ animate();
 initNetwork(
     scene,
     () => { gameActive = true; },
-    (damage) => {
+    (damage, shooterId) => {
         if (isDead) return;
+        lastHitBy = shooterId;
         health -= damage;
         if (health < 0) health = 0;
         setHealthBar(health);
+        triggerShake(damage * 0.0018);
         if (health <= 0) triggerDeath();
         else playRandomOuch();
     }

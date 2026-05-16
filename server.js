@@ -85,9 +85,9 @@ io.on('connection', (socket) => {
         io.to(currentRoom).emit('player-hit', { shooterId: socket.id, targetId, damage });
     });
 
-    socket.on('player-died', () => {
+    socket.on('player-died', ({ killerId }) => {
         if (!currentRoom) return;
-        socket.to(currentRoom).emit('player-died', { id: socket.id });
+        io.to(currentRoom).emit('player-died', { id: socket.id, killerId: killerId || null });
     });
 
     socket.on('player-respawned', () => {

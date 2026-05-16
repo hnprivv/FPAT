@@ -2,12 +2,18 @@ import * as THREE from './node_modules/three/build/three.module.js';
 
 let socket = null;
 let myPlayerId = null;
+let myPlayerName = 'Player';
 let currentRoomId = null;
 let threeScene = null;
 let onHitReceivedCb = null;
 
+const playerNames = new Map();
+
 // id -> { group, targetPos, targetYaw, muzzleFlash, muzzleTimer }
 const remotePlayers = new Map();
+
+// Flying explosion pieces  { mesh, velocity, angularVel, timer, duration }
+const explodingPieces = [];
 
 // ---- Player colours ----
 const PLAYER_COLORS = [0xe74c3c, 0xe67e22, 0x9b59b6, 0x1abc9c]; // red, orange, purple, teal
@@ -128,6 +134,7 @@ function createPlayerMesh(name, color) {
 
 function addRemotePlayer(state) {
     if (remotePlayers.has(state.id)) return;
+    playerNames.set(state.id, state.name || 'Player');
     const color = colorForId(state.id);
     const { group, muzzleFlash } = createPlayerMesh(state.name, color);
     const y = (state.position?.y ?? 2) - 1.9;
@@ -142,6 +149,7 @@ function addRemotePlayer(state) {
         muzzleTimer: 0,
         dying: false,
         dyingTimer: 0,
+        exploded: false,
     });
     refreshPlayerCount();
 }
@@ -155,6 +163,7 @@ function removeRemotePlayer(id) {
     });
     threeScene.remove(data.group);
     remotePlayers.delete(id);
+    playerNames.delete(id);
     refreshPlayerCount();
 }
 
@@ -162,13 +171,15 @@ function removeRemotePlayer(id) {
 export function updateRemotePlayers(delta) {
     const lf = Math.min(1, 15 * delta);
     remotePlayers.forEach(data => {
-        // Death fall animation — skip normal movement while collapsing
         if (data.dying) {
-            data.dyingTimer += delta;
-            const t = Math.min(1, data.dyingTimer / 1.0);
-            data.group.rotation.x = t * Math.PI / 2;
-            data.group.position.y = data.targetPos.y - t * 0.6;
-            if (data.dyingTimer > 1.5) data.group.visible = false;
+            if (!data.exploded) {
+                // Fallback tip animation (shouldn't normally run with explosion on)
+                data.dyingTimer += delta;
+                const t = Math.min(1, data.dyingTimer / 1.0);
+                data.group.rotation.x = t * Math.PI / 2;
+                data.group.position.y = data.targetPos.y - t * 0.6;
+                if (data.dyingTimer > 1.5) data.group.visible = false;
+            }
             return;
         }
 
@@ -183,6 +194,26 @@ export function updateRemotePlayers(delta) {
             }
         }
     });
+
+    // Animate flying explosion pieces
+    for (let i = explodingPieces.length - 1; i >= 0; i--) {
+        const p = explodingPieces[i];
+        p.timer += delta;
+        const t = p.timer / p.duration;
+
+        p.velocity.y -= 14 * delta; // gravity
+        p.mesh.position.addScaledVector(p.velocity, delta);
+        p.mesh.rotation.x += p.angularVel.x * delta;
+        p.mesh.rotation.y += p.angularVel.y * delta;
+        p.mesh.rotation.z += p.angularVel.z * delta;
+        p.mesh.material.opacity = Math.max(0, 1 - t * t);
+
+        if (t >= 1) {
+            threeScene.remove(p.mesh);
+            p.mesh.material.dispose();
+            explodingPieces.splice(i, 1);
+        }
+    }
 }
 
 // ---- Chat ----
@@ -258,6 +289,108 @@ function initChatUI() {
     });
 }
 
+// ---- Explosion ----
+function explodePlayer(id) {
+    const data = remotePlayers.get(id);
+    if (!data || data.exploded) return;
+    data.exploded = true;
+    data.dying = true;
+    data.dyingTimer = 0;
+
+    const origin = new THREE.Vector3();
+    data.group.getWorldPosition(origin);
+    // Aim the origin at the torso centre (roughly mid-body)
+    origin.y += 0.8;
+
+    data.group.traverse(child => {
+        if (!child.isMesh) return;
+
+        // Clone so the original group stays intact for respawn
+        const worldPos = new THREE.Vector3();
+        const worldQuat = new THREE.Quaternion();
+        const worldScale = new THREE.Vector3();
+        child.getWorldPosition(worldPos);
+        child.getWorldQuaternion(worldQuat);
+        child.getWorldScale(worldScale);
+
+        const clone = child.clone();
+        clone.material = child.material.clone();
+        clone.material.transparent = true;
+        clone.material.opacity = 1;
+        clone.castShadow = false;
+        clone.position.copy(worldPos);
+        clone.quaternion.copy(worldQuat);
+        clone.scale.copy(worldScale);
+        threeScene.add(clone);
+
+        // Outward velocity from body centre
+        const dir = worldPos.clone().sub(origin);
+        if (dir.length() < 0.05) dir.set(Math.random() - 0.5, 0.5, Math.random() - 0.5);
+        dir.normalize();
+
+        const speed = 4 + Math.random() * 6;
+        const velocity = new THREE.Vector3(
+            dir.x * speed + (Math.random() - 0.5) * 2,
+            dir.y * speed + 3 + Math.random() * 4,
+            dir.z * speed + (Math.random() - 0.5) * 2,
+        );
+
+        const angularVel = new THREE.Vector3(
+            (Math.random() - 0.5) * 20,
+            (Math.random() - 0.5) * 20,
+            (Math.random() - 0.5) * 20,
+        );
+
+        explodingPieces.push({ mesh: clone, velocity, angularVel, timer: 0, duration: 1.4 });
+    });
+
+    // Hide original group immediately
+    data.group.visible = false;
+
+    document.dispatchEvent(new CustomEvent('player-exploded', { detail: { position: origin.clone() } }));
+}
+
+// ---- Kill feed ----
+const ROAST_MSGS = [
+    'absolutely cooked',
+    'sent to the shadow realm',
+    'deleted',
+    'erased from existence',
+    'disrespected',
+    'turned into a fine mist',
+    'clowned on',
+    'one-tapped',
+    'obliterated',
+    'humiliated',
+    'put in a coffin',
+    'cooked like a rotisserie chicken',
+    'made an example of',
+    'ended',
+];
+
+function appendKillFeed(killerId, victimId) {
+    if (!killerId) return;
+    const feed = document.getElementById('kill-feed');
+    if (!feed) return;
+
+    const killerName = killerId === myPlayerId ? myPlayerName : (playerNames.get(killerId) || 'Unknown');
+    const victimName = victimId === myPlayerId ? myPlayerName : (playerNames.get(victimId) || 'Unknown');
+    const killerColor = colorToCss(colorForId(killerId));
+    const victimColor = colorToCss(colorForId(victimId));
+    const roast = ROAST_MSGS[Math.floor(Math.random() * ROAST_MSGS.length)];
+
+    const entry = document.createElement('div');
+    entry.className = 'kill-entry';
+    entry.innerHTML =
+        `<span class="kill-name" style="color:${killerColor}">${killerName}</span>` +
+        ` <span class="kill-roast">${roast}</span> ` +
+        `<span class="kill-name" style="color:${victimColor}">${victimName}</span>`;
+
+    feed.appendChild(entry);
+    while (feed.children.length > 4) feed.removeChild(feed.firstChild);
+    setTimeout(() => entry.remove(), 5000);
+}
+
 // ---- Broadcast helpers ----
 let lastBroadcast = 0;
 export function broadcastState(controlsObj, health) {
@@ -283,9 +416,9 @@ export function broadcastPlayerHit(targetId, damage) {
 }
 
 // ---- Hit detection against remote capsules ----
-export function broadcastDeath() {
+export function broadcastDeath(killerId) {
     if (!socket || !currentRoomId) return;
-    socket.emit('player-died');
+    socket.emit('player-died', { killerId: killerId || null });
 }
 
 export function broadcastRespawn() {
@@ -336,13 +469,9 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
 
     socket.on('player-left', ({ id }) => removeRemotePlayer(id));
 
-    socket.on('player-died', ({ id }) => {
-        const data = remotePlayers.get(id);
-        if (!data) return;
-        data.dying = true;
-        data.dyingTimer = 0;
-        data.group.visible = true;
-        data.group.rotation.x = 0;
+    socket.on('player-died', ({ id, killerId }) => {
+        appendKillFeed(killerId, id);
+        explodePlayer(id);
     });
 
     socket.on('player-respawned', ({ id }) => {
@@ -350,7 +479,9 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
         if (!data) return;
         data.dying = false;
         data.dyingTimer = 0;
+        data.exploded = false;
         data.group.rotation.x = 0;
+        data.group.position.copy(data.targetPos);
         data.group.visible = true;
     });
 
@@ -361,9 +492,9 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
         data.muzzleTimer = 0.1;
     });
 
-    socket.on('player-hit', ({ targetId, damage }) => {
+    socket.on('player-hit', ({ shooterId, targetId, damage }) => {
         if (targetId === myPlayerId && onHitReceivedCb) {
-            onHitReceivedCb(damage);
+            onHitReceivedCb(damage, shooterId);
         }
     });
 
@@ -414,6 +545,7 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
             socket.emit('create-room', { name }, res => {
                 if (res.error) { setStatus(res.error, true); createBtn.disabled = false; return; }
                 myPlayerId = res.playerId;
+                myPlayerName = name;
                 currentRoomId = res.roomId;
                 revealInviteAndStart(res.roomId);
                 setStatus('Room ready! Share the link, then start when ready.');
@@ -431,6 +563,7 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
             socket.emit('join-room', { roomId: roomFromUrl, name }, res => {
                 if (res.error) { setStatus(res.error, true); joinBtn.disabled = false; return; }
                 myPlayerId = res.playerId;
+                myPlayerName = name;
                 currentRoomId = roomFromUrl;
                 res.existingPlayers?.forEach(addRemotePlayer);
                 if (startBtn) startBtn.style.display = 'block';
