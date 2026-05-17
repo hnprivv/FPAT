@@ -1548,6 +1548,28 @@ canvas {
     100% { opacity: 0; transform: translate(-50%, -130%) scale(0.85); }
 }
 
+/* ===== Damage direction indicator ===== */
+#damage-indicators {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 50;
+}
+
+.dmg-indicator {
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse 90px 140px at 50% 4%, rgba(220, 30, 30, 0.82) 0%, transparent 100%);
+    pointer-events: none;
+    opacity: 1;
+    transform-origin: center center;
+    transition: opacity 1.4s ease-out;
+}
+
+.dmg-indicator.fade {
+    opacity: 0;
+}
+
 /* ===== SND team badge ===== */
 #snd-team-badge {
     position: absolute;

@@ -1,7 +1,7 @@
 import * as THREE from "./node_modules/three/build/three.module.js";
 import { GLTFLoader } from './node_modules/three/examples/jsm/loaders/GLTFLoader.js';
 import { EXRLoader } from './node_modules/three/examples/jsm/loaders/EXRLoader.js';
-import { initNetwork, broadcastState, broadcastShoot, broadcastPlayerHit, broadcastDeath, broadcastRespawn, broadcastBombPlanted, broadcastBombDefused, broadcastBombPlantingStart, broadcastBombPlantingStop, broadcastSndRematch, broadcastSndQuit, broadcastPistolThrow, broadcastPistolReturn, getMyPlayerId, getRemotePlayerHit, updateRemotePlayers, initRemoteAudio, getLeaderboardData, getRemotePlayerPositions, setRemoteFootstepVolume, setWallBoxes, broadcastGrenadeThrow, getPlayersInRange } from './network.js';
+import { initNetwork, broadcastState, broadcastShoot, broadcastPlayerHit, broadcastDeath, broadcastRespawn, broadcastBombPlanted, broadcastBombDefused, broadcastBombPlantingStart, broadcastBombPlantingStop, broadcastSndRematch, broadcastSndQuit, broadcastPistolThrow, broadcastPistolReturn, getMyPlayerId, getRemotePlayerHit, updateRemotePlayers, initRemoteAudio, getLeaderboardData, getRemotePlayerPositions, getRemotePlayerPosition, setRemoteFootstepVolume, setWallBoxes, broadcastGrenadeThrow, getPlayersInRange } from './network.js';
 
 // Asset loading manager
 const loadingManager = new THREE.LoadingManager();
@@ -1238,6 +1238,34 @@ function triggerShake(intensity) {
     shakeAngle = Math.random() * Math.PI * 2;
 }
 
+function showDamageIndicator(shooterId) {
+    const attackerPos = getRemotePlayerPosition(shooterId);
+    const container = document.getElementById('damage-indicators');
+    if (!container) return;
+
+    let angleDeg = 0;
+    if (attackerPos) {
+        const forward = new THREE.Vector3();
+        camera.getWorldDirection(forward);
+        const dx = attackerPos.x - camera.position.x;
+        const dz = attackerPos.z - camera.position.z;
+        const forwardAngle = Math.atan2(forward.x, forward.z);
+        const attackerAngle = Math.atan2(dx, dz);
+        let rel = forwardAngle - attackerAngle;
+        while (rel > Math.PI) rel -= 2 * Math.PI;
+        while (rel < -Math.PI) rel += 2 * Math.PI;
+        angleDeg = rel * (180 / Math.PI);
+    }
+
+    const el = document.createElement('div');
+    el.className = 'dmg-indicator';
+    el.style.transform = `rotate(${angleDeg}deg)`;
+    container.appendChild(el);
+
+    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('fade')));
+    setTimeout(() => el.remove(), 1700);
+}
+
 // ---- Grenade system ----
 function updateGrenadeUI() {
     const el = document.getElementById('grenade-count');
@@ -2413,6 +2441,7 @@ initNetwork(
         if (health < 0) health = 0;
         setHealthBar(health);
         triggerShake(damage * 0.0018);
+        showDamageIndicator(shooterId);
         if (health <= 0) triggerDeath();
         else playRandomOuch();
     }

@@ -598,6 +598,11 @@ export function broadcastBombPlantingStop() {
 
 export function getMyPlayerId() { return myPlayerId; }
 
+export function getRemotePlayerPosition(id) {
+    const data = remotePlayers.get(id);
+    return data ? data.group.position : null;
+}
+
 export function getPlayersInRange(center, radius) {
     const results = [];
     remotePlayers.forEach((data, id) => {
