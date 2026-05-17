@@ -305,6 +305,16 @@ io.on('connection', (socket) => {
         socket.to(currentRoom).emit('grenade-thrown', data);
     });
 
+    socket.on('pistol-thrown', (data) => {
+        if (!currentRoom) return;
+        socket.to(currentRoom).emit('pistol-thrown', { id: socket.id, ...data });
+    });
+
+    socket.on('pistol-returned', () => {
+        if (!currentRoom) return;
+        socket.to(currentRoom).emit('pistol-returned', { id: socket.id });
+    });
+
     // ---- SND events ----
     socket.on('snd-start', () => {
         if (!currentRoom) return;

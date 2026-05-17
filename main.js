@@ -1,7 +1,7 @@
 import * as THREE from "./node_modules/three/build/three.module.js";
 import { GLTFLoader } from './node_modules/three/examples/jsm/loaders/GLTFLoader.js';
 import { EXRLoader } from './node_modules/three/examples/jsm/loaders/EXRLoader.js';
-import { initNetwork, broadcastState, broadcastShoot, broadcastPlayerHit, broadcastDeath, broadcastRespawn, broadcastBombPlanted, broadcastBombDefused, broadcastBombPlantingStart, broadcastBombPlantingStop, broadcastSndRematch, broadcastSndQuit, getMyPlayerId, getRemotePlayerHit, updateRemotePlayers, initRemoteAudio, getLeaderboardData, getRemotePlayerPositions, setRemoteFootstepVolume, setWallBoxes, broadcastGrenadeThrow, getPlayersInRange } from './network.js';
+import { initNetwork, broadcastState, broadcastShoot, broadcastPlayerHit, broadcastDeath, broadcastRespawn, broadcastBombPlanted, broadcastBombDefused, broadcastBombPlantingStart, broadcastBombPlantingStop, broadcastSndRematch, broadcastSndQuit, broadcastPistolThrow, broadcastPistolReturn, getMyPlayerId, getRemotePlayerHit, updateRemotePlayers, initRemoteAudio, getLeaderboardData, getRemotePlayerPositions, setRemoteFootstepVolume, setWallBoxes, broadcastGrenadeThrow, getPlayersInRange } from './network.js';
 
 // Asset loading manager
 const loadingManager = new THREE.LoadingManager();
@@ -398,6 +398,9 @@ let _sndRoundStartTimeout = null;
 let _sndRoundEndTimeout   = null;
 let _bombBeepTimeout      = null;
 let _bombSecondsLeft      = 50;
+let c4LightMesh           = null;
+let c4LightFlashTimer     = 0;
+const C4_FLASH_DURATION   = 0.12;
 
 // ---- Grenade constants ----
 const GRENADE_MAX        = 2;
@@ -425,6 +428,7 @@ let isDay = true;
 let exrTexture = null;
 let wallBoxes = [];
 let mapScene = null;
+let c4Template = null;
 
 // Add target detection globals
 let targetObjects = [];
@@ -453,7 +457,7 @@ function onKeyDown(event) {
             updateDayNightButton();
             break;
         case 'KeyQ':
-            performMelee();
+            throwPistol();
             break;
         case 'KeyG':
             throwGrenade();
@@ -566,6 +570,16 @@ let muzzleFlash = null;
 // Load GLTF model with manager
 const loader = new GLTFLoader(loadingManager);
 loader.load('fps2.glb', (gltf) => {
+    // Pull C4 out before adding scene so it's invisible until planted
+    const c4Node = gltf.scene.getObjectByName('C4');
+    if (c4Node?.parent) {
+        c4Node.parent.remove(c4Node);
+        c4Template = c4Node;
+        c4Template.traverse(child => {
+            if (child.isMesh && child.material) child.material = child.material.clone();
+        });
+    }
+
     scene.add(gltf.scene);
     mapScene = gltf.scene;
 
@@ -806,7 +820,7 @@ audioLoader.load('empty.mp3', (buffer) => {
 
 // Shooting logic
 function shootHandler(event) {
-    if (controls.isLocked === true && event.button === 0 && !isDead && fireCooldown <= 0) {
+    if (controls.isLocked === true && event.button === 0 && !isDead && fireCooldown <= 0 && !thrownPistol) {
         if (ammoCurrent > 0) {
             fireCooldown = FIRE_RATE;
             gunshotSound.stop();
@@ -975,6 +989,31 @@ document.addEventListener('remote-grenade-thrown', (e) => {
     const g = spawnGrenadeObject(pos, vel);
     g.isRemote = true;
     grenades.push(g);
+});
+
+document.addEventListener('remote-pistol-thrown', (e) => {
+    const { id, position, velocity } = e.detail;
+    const pistolObj = camera.getObjectByName('Pistol');
+    if (!pistolObj) return;
+    const clone = pistolObj.clone();
+    clone.position.set(position.x, position.y, position.z);
+    clone.visible = true;
+    scene.add(clone);
+    remoteThrownPistols.set(id, {
+        mesh: clone,
+        velocity: new THREE.Vector3(velocity.x, velocity.y, velocity.z),
+        age: 0,
+    });
+});
+
+document.addEventListener('remote-pistol-returned', (e) => {
+    const rp = remoteThrownPistols.get(e.detail.id);
+    if (rp) { scene.remove(rp.mesh); remoteThrownPistols.delete(e.detail.id); }
+});
+
+document.addEventListener('player-left', (e) => {
+    const rp = remoteThrownPistols.get(e.detail.id);
+    if (rp) { scene.remove(rp.mesh); remoteThrownPistols.delete(e.detail.id); }
 });
 
 // Crouch sound
@@ -1380,42 +1419,43 @@ function spawnBloodEffect(position) {
     }
 }
 
-// === Melee attack ===
-const MELEE_COOLDOWN = 0.8;
-const MELEE_RANGE = 2.5;
-let meleeCooldown = 0;
-let meleeAnimTimer = 0;
+// === Thrown pistol ===
+const PISTOL_THROW_SPEED    = 18;
+const PISTOL_GRAVITY        = 14;
+const PISTOL_MAX_FLIGHT     = 4.5;
+const PISTOL_RETURN_DELAY   = 2.0;   // wait after hitting a player
+const PISTOL_RETURN_SPEED   = 24;
+let thrownPistol = null;              // { mesh, velocity, age, hitSomeone, returning, returnTimer }
+const remoteThrownPistols = new Map(); // playerId -> { mesh, velocity, age }
 
-function performMelee() {
-    if (meleeCooldown > 0 || isDead) return;
-    meleeCooldown = MELEE_COOLDOWN;
-    meleeAnimTimer = 0.25;
+function throwPistol() {
+    if (!controls.isLocked || isDead || thrownPistol) return;
+    const pistolObj = camera.getObjectByName('Pistol');
+    if (!pistolObj) return;
 
-    const origin = new THREE.Vector3();
+    // Capture world transform before cloning
+    const worldPos = new THREE.Vector3();
+    const worldQuat = new THREE.Quaternion();
+    const worldScale = new THREE.Vector3();
+    pistolObj.matrixWorld.decompose(worldPos, worldQuat, worldScale);
+
+    const clone = pistolObj.clone();
+    clone.position.copy(worldPos);
+    clone.quaternion.copy(worldQuat);
+    clone.scale.copy(worldScale);
+    scene.add(clone);
+
+    // Throw direction: forward with a slight upward arc
     const dir = new THREE.Vector3();
-    camera.getWorldPosition(origin);
     camera.getWorldDirection(dir);
-    const meleeRay = new THREE.Raycaster(origin, dir, 0, MELEE_RANGE);
+    dir.y += 0.15;
+    dir.normalize();
+    const vel = dir.clone().multiplyScalar(PISTOL_THROW_SPEED);
 
-    const hit = getRemotePlayerHit(meleeRay);
-    if (hit) {
-        let wallBlocked = false;
-        if (mapScene) {
-            const wallHits = meleeRay.intersectObject(mapScene, true);
-            if (wallHits.length > 0 && wallHits[0].distance < hit.intersect.distance) wallBlocked = true;
-        }
-        if (!wallBlocked) {
-            broadcastPlayerHit(hit.playerId, 35);
-            showHitPopup(hit.bodyPos, 35, hit.isHeadshot);
-            triggerShake(0.025);
-            spawnBloodEffect(hit.intersect.point);
-        } else {
-            triggerShake(0.004);
-        }
-    } else {
-        triggerShake(0.004);
-    }
+    thrownPistol = { mesh: clone, velocity: vel, age: 0, hitSomeone: false, returning: false, returnTimer: 0 };
+    broadcastPistolThrow(worldPos, vel);
 }
+
 
 // Damage number popups
 function showHitPopup(worldPoint, damage, isHeadshot) {
@@ -1467,6 +1507,13 @@ function triggerDeath() {
     plantTimer = 0;
     defuseTimer = 0;
     updateSndProgressBar(false, 0, 0);
+
+    if (thrownPistol) {
+        scene.remove(thrownPistol.mesh);
+        thrownPistol = null;
+        const p = camera.getObjectByName('Pistol');
+        if (p) p.visible = true;
+    }
 
     if (sndMode) {
         isSpectating = true;
@@ -1532,6 +1579,7 @@ function startBombBeep() {
             if (sndBombBeep.isPlaying) sndBombBeep.stop();
             sndBombBeep.play();
         }
+        triggerC4Flash();
         // Interval shrinks linearly from 1000ms at 50s left to 150ms at ~7.5s left
         const interval = Math.max(150, 1000 * (_bombSecondsLeft / 50));
         _bombBeepTimeout = setTimeout(tick, interval);
@@ -1542,6 +1590,12 @@ function startBombBeep() {
 function stopBombBeep() {
     if (_bombBeepTimeout) { clearTimeout(_bombBeepTimeout); _bombBeepTimeout = null; }
     if (sndBombBeep.isPlaying) sndBombBeep.stop();
+    c4LightFlashTimer = 0;
+    if (c4LightMesh?.material) c4LightMesh.material.emissiveIntensity = 0;
+}
+
+function triggerC4Flash() {
+    c4LightFlashTimer = C4_FLASH_DURATION;
 }
 
 function startPlantingSound(position) {
@@ -1567,12 +1621,26 @@ function isNearBomb() {
 }
 
 function spawnPlantedBomb(position) {
-    if (bombMesh) { scene.remove(bombMesh); bombMesh = null; }
+    removePlantedBomb(); // clean up any previous instance first
     const floorY = Math.max(0.18, position.y - 1.9);
-    const geo = new THREE.SphereGeometry(0.18, 10, 10);
-    const mat = new THREE.MeshLambertMaterial({ color: 0xff3300 });
-    bombMesh = new THREE.Mesh(geo, mat);
-    bombMesh.castShadow = true;
+
+    if (c4Template) {
+        bombMesh = c4Template.clone();
+        bombMesh.traverse(child => {
+            if (child.isMesh && child.material) child.material = child.material.clone();
+        });
+        c4LightMesh = bombMesh.getObjectByName('C4_Light');
+        if (c4LightMesh?.material) {
+            c4LightMesh.material.emissive = new THREE.Color(0xff0000);
+            c4LightMesh.material.emissiveIntensity = 0;
+        }
+    } else {
+        // Fallback if C4 model not found in GLB
+        const geo = new THREE.SphereGeometry(0.18, 10, 10);
+        const mat = new THREE.MeshLambertMaterial({ color: 0xff3300 });
+        bombMesh = new THREE.Mesh(geo, mat);
+    }
+
     bombMesh.position.set(position.x, floorY, position.z);
     bombMesh.add(sndBombBeep);
     scene.add(bombMesh);
@@ -1581,7 +1649,13 @@ function spawnPlantedBomb(position) {
 
 function removePlantedBomb() {
     if (sndBombBeep.parent) sndBombBeep.parent.remove(sndBombBeep);
-    if (bombMesh) { scene.remove(bombMesh); bombMesh.geometry.dispose(); bombMesh.material.dispose(); bombMesh = null; }
+    if (bombMesh) {
+        bombMesh.traverse(child => { if (child.isMesh && child.material) child.material.dispose(); });
+        scene.remove(bombMesh);
+        bombMesh = null;
+    }
+    c4LightMesh = null;
+    c4LightFlashTimer = 0;
     bombWorldPos = null;
 }
 
@@ -1883,8 +1957,6 @@ function animate() {
     }
 
     if (fireCooldown > 0) fireCooldown -= delta;
-    if (meleeCooldown > 0) meleeCooldown -= delta;
-    if (meleeAnimTimer > 0) meleeAnimTimer = Math.max(0, meleeAnimTimer - delta);
 
     // Dampen velocity
     velocity.x -= velocity.x * 10.0 * delta;
@@ -2071,31 +2143,139 @@ function animate() {
         if (t > 0.8) h.sprite.material.opacity = 1 - (t - 0.8) / 0.2;
     }
 
-    // Pistol bobbing effect
+    // Pistol bobbing effect (hidden while pistol is in flight)
     const pistol = camera.children.find(obj => obj.name === "Pistol");
     if (pistol) {
-        let basePosition = new THREE.Vector3(0.4, -0.3, -0.8);
+        pistol.visible = !thrownPistol;
+        if (!thrownPistol) {
+            let basePosition = new THREE.Vector3(0.4, -0.3, -0.8);
 
-        if (!isReloading && !isRaisingGun && isMoving) {
-            const time = clock.getElapsedTime();
-            const bobAmount = 0.05;
-            let bobSpeed = isWalking ? 4 : isCrouching ? 2 : 8;
-            basePosition.x += Math.sin(time * bobSpeed) * 0.03;
-            basePosition.y += Math.abs(Math.sin(time * bobSpeed)) * bobAmount;
+            if (!isReloading && !isRaisingGun && isMoving) {
+                const time = clock.getElapsedTime();
+                const bobAmount = 0.05;
+                let bobSpeed = isWalking ? 4 : isCrouching ? 2 : 8;
+                basePosition.x += Math.sin(time * bobSpeed) * 0.03;
+                basePosition.y += Math.abs(Math.sin(time * bobSpeed)) * bobAmount;
+            }
+
+            if (reloadAnimProgress > 0) basePosition.y += -0.7 * reloadAnimProgress;
+
+            pistol.position.set(basePosition.x, basePosition.y, basePosition.z);
+            pistol.rotation.set(0 + recoil, -Math.PI / 2, 0);
         }
-
-        // Lower pistol for reload animation
-        if (reloadAnimProgress > 0) basePosition.y += -0.7 * reloadAnimProgress;
-
-        // Melee punch animation — lurch pistol forward and back
-        if (meleeAnimTimer > 0) {
-            const phase = 1 - meleeAnimTimer / 0.25;
-            basePosition.z -= Math.sin(phase * Math.PI) * 0.3;
-        }
-
-        pistol.position.set(basePosition.x, basePosition.y, basePosition.z);
-        pistol.rotation.set(0 + recoil, -Math.PI / 2, 0);
     }
+
+    // Thrown pistol physics & return
+    if (thrownPistol) {
+        const tp = thrownPistol;
+        tp.age += delta;
+
+        if (!tp.returning) {
+            tp.velocity.y -= PISTOL_GRAVITY * delta;
+            const tpNext = tp.mesh.position.clone().addScaledVector(tp.velocity, delta);
+
+            // Floor bounce
+            if (tpNext.y < 0.3) {
+                tpNext.y = 0.3;
+                tp.velocity.y = Math.abs(tp.velocity.y) * 0.45;
+                tp.velocity.x *= 0.8;
+                tp.velocity.z *= 0.8;
+            }
+
+            // Wall bounce — same AABB resolution as grenades
+            const PR = 0.12;
+            for (const box of wallBoxes) {
+                const ox = tpNext.x, oy = tpNext.y, oz = tpNext.z;
+                if (ox < box.min.x || ox > box.max.x || oy < box.min.y || oy > box.max.y || oz < box.min.z || oz > box.max.z) continue;
+                const dxP = (ox+PR)-box.min.x, dxN = box.max.x-(ox-PR);
+                const dyP = (oy+PR)-box.min.y, dyN = box.max.y-(oy-PR);
+                const dzP = (oz+PR)-box.min.z, dzN = box.max.z-(oz-PR);
+                const mX = Math.min(dxP,dxN), mY = Math.min(dyP,dyN), mZ = Math.min(dzP,dzN);
+                if (mX <= mY && mX <= mZ) { tpNext.x += dxP<dxN?-dxP:dxN; tp.velocity.x = -tp.velocity.x * 0.5; }
+                else if (mZ <= mX && mZ <= mY) { tpNext.z += dzP<dzN?-dzP:dzN; tp.velocity.z = -tp.velocity.z * 0.5; }
+                else { tpNext.y += dyP<dyN?-dyP:dyN; tp.velocity.y = -tp.velocity.y * 0.5; }
+            }
+
+            tp.mesh.position.copy(tpNext);
+            const tpSpeed = tp.velocity.length();
+            tp.mesh.rotation.x += tpSpeed * 0.5 * delta;
+            tp.mesh.rotation.z += tpSpeed * 0.2 * delta;
+
+            // Player proximity hit
+            if (!tp.hitSomeone) {
+                const hits = getPlayersInRange(tp.mesh.position, 0.8);
+                if (hits.length > 0) {
+                    broadcastPlayerHit(hits[0].id, 35);
+                    showHitPopup(tp.mesh.position, 35, false);
+                    tp.hitSomeone = true;
+                    tp.returning = true;
+                    tp.returnTimer = PISTOL_RETURN_DELAY;
+                    broadcastPistolReturn();
+                }
+            }
+
+            // Max flight time → begin return
+            if (!tp.returning && tp.age >= PISTOL_MAX_FLIGHT) {
+                tp.returning = true;
+                tp.returnTimer = 0;
+                broadcastPistolReturn();
+            }
+        } else {
+            // Wait out delay (after hitting a player), then fly back
+            if (tp.returnTimer > 0) {
+                tp.returnTimer -= delta;
+            } else {
+                const camPos = new THREE.Vector3();
+                camera.getWorldPosition(camPos);
+                const toCamera = camPos.sub(tp.mesh.position);
+                const dist = toCamera.length();
+                if (dist < 0.5) {
+                    scene.remove(tp.mesh);
+                    thrownPistol = null;
+                } else {
+                    tp.mesh.position.addScaledVector(toCamera.normalize(), PISTOL_RETURN_SPEED * delta);
+                    tp.mesh.rotation.x += 15 * delta;
+                }
+            }
+        }
+    }
+
+    // Remote thrown pistols — simulate physics so other players see them fly
+    remoteThrownPistols.forEach((rp, id) => {
+        rp.age += delta;
+        if (rp.age > PISTOL_MAX_FLIGHT + PISTOL_RETURN_DELAY + 3) {
+            scene.remove(rp.mesh);
+            remoteThrownPistols.delete(id);
+            return;
+        }
+        rp.velocity.y -= PISTOL_GRAVITY * delta;
+        const rpNext = rp.mesh.position.clone().addScaledVector(rp.velocity, delta);
+
+        if (rpNext.y < 0.3) {
+            rpNext.y = 0.3;
+            rp.velocity.y = Math.abs(rp.velocity.y) * 0.45;
+            rp.velocity.x *= 0.8;
+            rp.velocity.z *= 0.8;
+        }
+
+        const RPR = 0.12;
+        for (const box of wallBoxes) {
+            const ox = rpNext.x, oy = rpNext.y, oz = rpNext.z;
+            if (ox < box.min.x || ox > box.max.x || oy < box.min.y || oy > box.max.y || oz < box.min.z || oz > box.max.z) continue;
+            const dxP = (ox+RPR)-box.min.x, dxN = box.max.x-(ox-RPR);
+            const dyP = (oy+RPR)-box.min.y, dyN = box.max.y-(oy-RPR);
+            const dzP = (oz+RPR)-box.min.z, dzN = box.max.z-(oz-RPR);
+            const mX = Math.min(dxP,dxN), mY = Math.min(dyP,dyN), mZ = Math.min(dzP,dzN);
+            if (mX <= mY && mX <= mZ) { rpNext.x += dxP<dxN?-dxP:dxN; rp.velocity.x = -rp.velocity.x * 0.5; }
+            else if (mZ <= mX && mZ <= mY) { rpNext.z += dzP<dzN?-dzP:dzN; rp.velocity.z = -rp.velocity.z * 0.5; }
+            else { rpNext.y += dyP<dyN?-dyP:dyN; rp.velocity.y = -rp.velocity.y * 0.5; }
+        }
+
+        rp.mesh.position.copy(rpNext);
+        const rpSpeed = rp.velocity.length();
+        rp.mesh.rotation.x += rpSpeed * 0.5 * delta;
+        rp.mesh.rotation.z += rpSpeed * 0.2 * delta;
+    });
 
     // Grenade recharge
     if (grenadeCount < GRENADE_MAX) {
@@ -2195,9 +2375,13 @@ function animate() {
             updateSndProgressBar(false, 0, 0);
         }
 
-        if (bombMesh) {
-            const pulse = 1 + Math.sin(performance.now() * 0.005) * 0.08;
-            bombMesh.scale.setScalar(pulse);
+        if (c4LightMesh?.material) {
+            if (c4LightFlashTimer > 0) {
+                c4LightFlashTimer = Math.max(0, c4LightFlashTimer - delta);
+                c4LightMesh.material.emissiveIntensity = c4LightFlashTimer / C4_FLASH_DURATION;
+            } else {
+                c4LightMesh.material.emissiveIntensity = 0;
+            }
         }
 
         updateSndPrompt();

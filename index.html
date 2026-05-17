@@ -213,34 +213,43 @@
             <div id="info-modal-body">
                 <div class="info-section">
                     <div class="info-section-title">ABOUT</div>
-                    <p>A browser-based first-person shooter built with Three.js and Socket.io. Practice your aim solo against targets, or drop into real-time multiplayer with up to 4 players per room.</p>
+                    <p>A browser-based first-person shooter built with Three.js and Socket.io. Practice your aim solo against targets, or drop into real-time multiplayer with up to 4 players per room. Two game modes are available: <strong>Free for All</strong> and <strong>Search &amp; Destroy</strong>.</p>
                 </div>
 
                 <div class="info-section">
                     <div class="info-section-title">MOVEMENT</div>
-                    <p>Run with <kbd>WASD</kbd>, hold <kbd>SHIFT</kbd> to walk, <kbd>C</kbd> to crouch, and <kbd>SPACE</kbd> to jump. Sprinting drains stamina — rest to recover it.</p>
+                    <p>Run with <kbd>WASD</kbd>, hold <kbd>SHIFT</kbd> to walk quietly, <kbd>C</kbd> to crouch, and <kbd>SPACE</kbd> to jump. Sprinting drains stamina — stand still or walk to recover it.</p>
                 </div>
 
                 <div class="info-section">
                     <div class="info-section-title">COMBAT</div>
-                    <p>Left-click to fire. Press <kbd>R</kbd> to reload — you carry 54 reserve rounds (10 per mag), replenished only on respawn. Damage falls off over distance. <span class="info-hs">Headshots deal 25 damage</span> and show a red popup. <span class="info-body">Body shots deal 15 damage</span> and show a yellow popup.</p>
-                    <p>Press <kbd>Q</kbd> to melee — deals 35 damage up close and can finish off a weakened enemy. Press <kbd>G</kbd> to throw a grenade (2 per life, recharge over time). Watch out — your own explosions hurt.</p>
-                    <p>String together kills for streak announcements: <span class="info-triple">Triple Kill</span> (3), <span class="info-rampage">Rampage</span> (5), <span class="info-unstoppable">Unstoppable</span> (6).</p>
+                    <p>Left-click to fire. Press <kbd>R</kbd> to reload — you carry 54 reserve rounds (10 per mag), replenished only on respawn. Damage falls off with distance. <span class="info-hs">Headshots deal 25 damage</span> and show a red popup. <span class="info-body">Body shots deal 15 damage</span> and show a yellow popup.</p>
+                    <p>Press <kbd>Q</kbd> to throw your pistol — it bounces off walls and floors with real physics. If it hits an enemy it deals 35 damage and flies back to you after 2 seconds. Miss and it returns automatically after 4–5 seconds. You cannot fire while it is in flight.</p>
+                    <p>Press <kbd>G</kbd> to throw a grenade (2 per life, recharge over time). Grenades bounce off walls and deal up to 60 damage within their blast radius. Watch out — your own explosions hurt.</p>
+                    <p>String together kills for streak announcements: <span class="info-triple">Triple Kill</span> (3), <span class="info-rampage">Rampage</span> (5), <span class="info-unstoppable">Unstoppable</span> (6+).</p>
+                </div>
+
+                <div class="info-section">
+                    <div class="info-section-title">SEARCH &amp; DESTROY</div>
+                    <p>A 5-round competitive mode. Attackers must plant the C4 bomb at the designated site; defenders must stop them. One team scores a point by eliminating all enemies, planting and detonating the bomb, or defusing it before it explodes.</p>
+                    <p>The bomb carrier is randomly assigned each round. Walk into the bomb site and hold <kbd>E</kbd> for 7 seconds to plant (7s). Defenders hold <kbd>E</kbd> near the planted bomb for 12 seconds to defuse. The bomb fuse is 50 seconds — you will hear it tick faster as time runs out.</p>
+                    <p>Teams swap sides after round 2. Scores follow the players, not the roles. First to 3 points or the team ahead after 5 rounds wins. On death you enter free-look spectate — use <kbd>WASD</kbd> to fly around.</p>
+                    <p>The host starts the match from the lobby and can call a Rematch or Quit after the final round.</p>
                 </div>
 
                 <div class="info-section">
                     <div class="info-section-title">MULTIPLAYER</div>
-                    <p>Click <strong>🌐</strong> to open the lobby. Create a named room and share the invite link, paste a link or room code to join a friend, or browse <strong>Public Rooms</strong> for open sessions. Hold <kbd>TAB</kbd> for the live leaderboard and press <kbd>ENTER</kbd> to open chat.</p>
+                    <p>Click <strong>🌐</strong> to open the lobby. Create a named room (choose Free for All or Search &amp; Destroy), share the invite link, paste a link or room code to join a friend, or browse <strong>Public Rooms</strong> for open sessions. Up to 4 players per room. Hold <kbd>TAB</kbd> for the live leaderboard and press <kbd>ENTER</kbd> to open chat.</p>
                 </div>
 
                 <div class="info-section">
                     <div class="info-section-title">TOOLBAR</div>
-                    <p>Top-right buttons (right to left): Controls guide, Project info, Reset score, Day/Night toggle, Audio settings, Multiplayer lobby.</p>
+                    <p>Top-right buttons (left to right): Controls guide, Project info, Reset score, Day/Night toggle, Audio settings, Multiplayer lobby.</p>
                 </div>
 
                 <div class="info-section">
                     <div class="info-section-title">NOTE</div>
-                    <p>Currently, any open spaces inside the walls i.e. windows, act as a barrier. Therefore, you cannot jump through them or throw grenades through them. This will be fixed later on.</p>
+                    <p>Open spaces inside walls (e.g. windows) currently act as solid barriers — you cannot jump through them or throw objects through them. This will be addressed in a future update.</p>
                 </div>
 
                 <p class="info-footer">Have fun! &nbsp;·&nbsp; Click anywhere to close.</p>

@@ -573,6 +573,19 @@ export function broadcastBombDefused() {
     socket.emit('snd-bomb-defused');
 }
 
+export function broadcastPistolThrow(position, velocity) {
+    if (!socket || !currentRoomId) return;
+    socket.emit('pistol-thrown', {
+        position: { x: position.x, y: position.y, z: position.z },
+        velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
+    });
+}
+
+export function broadcastPistolReturn() {
+    if (!socket || !currentRoomId) return;
+    socket.emit('pistol-returned');
+}
+
 export function broadcastBombPlantingStart(position) {
     if (!socket || !currentRoomId) return;
     socket.emit('snd-bomb-planting-start', { position: { x: position.x, y: position.y, z: position.z } });
@@ -655,7 +668,18 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
         data.targetYaw = state.yaw;
     });
 
-    socket.on('player-left', ({ id }) => removeRemotePlayer(id));
+    socket.on('player-left', ({ id }) => {
+        removeRemotePlayer(id);
+        document.dispatchEvent(new CustomEvent('player-left', { detail: { id } }));
+    });
+
+    socket.on('pistol-thrown', data => {
+        document.dispatchEvent(new CustomEvent('remote-pistol-thrown', { detail: data }));
+    });
+
+    socket.on('pistol-returned', data => {
+        document.dispatchEvent(new CustomEvent('remote-pistol-returned', { detail: data }));
+    });
 
     socket.on('player-died', ({ id, killerId }) => {
         appendKillFeed(killerId, id);
