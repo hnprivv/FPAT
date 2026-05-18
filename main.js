@@ -320,9 +320,11 @@ const reloadAnimSpeed = 2;
 let canJump = true;
 let isWalking = false;
 let isCrouching = false;
-let slot1Active = false;
-let slot2Active = false;
-let slot3Active = false;
+let activeWeapon = 'pistol'; // 'pistol' | 'shotgun'
+let weaponSwitchState = 'idle'; // 'idle' | 'holstering' | 'drawing'
+let weaponSwitchProgress = 0;
+let pendingWeapon = null;
+const WEAPON_SWITCH_SPEED = 4.5;
 let isReloading = false;
 let isRaisingGun = false;
 let reloadAnimProgress = 0;
@@ -422,6 +424,7 @@ let health = 100;
 let healthDepleteTimer = 0;
 let isDead = false;
 let lastHitBy = null;
+let lastHitWasMelee = false;
 let shakeIntensity = 0;
 let shakeAngle = 0;
 let isDay = true;
@@ -456,6 +459,12 @@ function onKeyDown(event) {
         case 'KeyN':
             updateDayNightButton();
             break;
+        case 'Digit1':
+            startWeaponSwitch('shotgun');
+            break;
+        case 'Digit2':
+            startWeaponSwitch('pistol');
+            break;
         case 'KeyQ':
             throwPistol();
             break;
@@ -473,37 +482,36 @@ function onKeyDown(event) {
             }
             break;
         case 'KeyF':
-            slot3Active = !slot3Active;
-            const slot3 = document.querySelectorAll('.inventory-slot')[2];
-            if (slot3) {
-                slot3.style.border = slot3Active
-                    ? '2px solid #38a169'
-                    : '2px solid #555';
-            }
             toggleFlashlightSound();
             flashlight.visible = !flashlight.visible;
             flashlight.intensity = flashlight.visible ? 10 : 0;
+            document.getElementById('flashlight-indicator')?.classList.toggle('active', flashlight.visible);
             break;
         case 'KeyR':
-            if (ammoCurrent < ammoMax && ammoReserve > 0 && !isReloading) {
-                isReloading = true;
-                isRaisingGun = false;
-                reloadAnimProgress = 0;
-                reloadSound.stop();
-                reloadSound.onEnded = null;
-
-                reloadSound.onEnded = () => {
-                    const needed = ammoMax - ammoCurrent;
-                    const take = Math.min(needed, ammoReserve);
-                    ammoCurrent += take;
-                    ammoReserve -= take;
-                    updateAmmoDisplay();
-                    isRaisingGun = true;
-                    isReloading = false;
+            if (activeWeapon === 'shotgun') {
+                if (shotgunAmmoCurrent < shotgunAmmoMax && shotgunAmmoReserve > 0 && !isReloading) {
+                    startShotgunReload();
+                }
+            } else {
+                if (ammoCurrent < ammoMax && ammoReserve > 0 && !isReloading) {
+                    isReloading = true;
+                    isRaisingGun = false;
+                    reloadAnimProgress = 0;
+                    reloadSound.stop();
                     reloadSound.onEnded = null;
-                    showReloadMessage(false);
-                };
-                reloadSound.play();
+                    reloadSound.onEnded = () => {
+                        const needed = ammoMax - ammoCurrent;
+                        const take = Math.min(needed, ammoReserve);
+                        ammoCurrent += take;
+                        ammoReserve -= take;
+                        updateAmmoDisplay();
+                        isRaisingGun = true;
+                        isReloading = false;
+                        reloadSound.onEnded = null;
+                        showReloadMessage(false);
+                    };
+                    reloadSound.play();
+                }
             }
             break;
         case 'Space':
@@ -558,14 +566,12 @@ function onKeyUp(event) {
 document.addEventListener('keydown', onKeyDown);
 document.addEventListener('keyup', onKeyUp);
 
-// Loading muzzle flash textures with manager
 const textureLoader = new THREE.TextureLoader(loadingManager);
 const muzzleTextures = [
     textureLoader.load('muzzle1.png'),
     textureLoader.load('muzzle2.png'),
 ];
-
-let muzzleFlash = null;
+let muzzleFlashTimer = 0;
 
 // Load GLTF model with manager
 const loader = new GLTFLoader(loadingManager);
@@ -627,17 +633,34 @@ loader.load('fps2.glb', (gltf) => {
         pistol.position.set(0.4, -0.3, -0.8); // Adjust X, Y, Z for desired placement
         pistol.rotation.set(0, -Math.PI / 2, 0); // Adjust for correct orientation
 
-        // Muzzle Flash setup
-        muzzleFlash = new THREE.Sprite(new THREE.SpriteMaterial({
-            map: muzzleTextures[0],
-            transparent: true,
-        }));
-        muzzleFlash.scale.set(0.2, 0.2, 0.2);
-        muzzleFlash.position.set(-0.2, 0.04, 0.05); // Position at the end of the pistol barrel
-        muzzleFlash.visible = false;
-        pistol.add(muzzleFlash);
+        const pistolFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: muzzleTextures[0], transparent: true }));
+        pistolFlash.name = 'PistolMuzzleFlash';
+        pistolFlash.scale.set(0.15, 0.15, 0.15);
+        pistolFlash.position.set(-0.15, 0.04, 0.05);
+        pistolFlash.visible = false;
+        pistol.add(pistolFlash);
+
     } else {
         console.warn('Pistol not found in GLB.');
+    }
+
+    const shotgunObj = gltf.scene.getObjectByName('Shotgun');
+    if (shotgunObj) {
+        shotgunObj.removeFromParent();
+        camera.add(shotgunObj);
+        shotgunObj.position.set(0.3, -0.38, -0.75);
+        shotgunObj.rotation.set(0, Math.PI, 0);
+        shotgunObj.scale.set(0.5, 0.5, 0.5);
+        shotgunObj.visible = false;
+
+        const shotgunFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: muzzleTextures[0], transparent: true }));
+        shotgunFlash.name = 'ShotgunMuzzleFlash';
+        shotgunFlash.scale.set(0.5, 0.5, 0.5);
+        shotgunFlash.position.set(0, 0.08, 1.55);
+        shotgunFlash.visible = false;
+        shotgunObj.add(shotgunFlash);
+    } else {
+        console.warn('Shotgun not found in GLB.');
     }
 
     // Find the SpawnPoint object
@@ -799,17 +822,31 @@ audioLoader.load('9mm.mp3', (buffer) => {
     gunshotSound.setVolume(gunVolume);
 });
 
+const shotgunSound = new THREE.Audio(listener);
+audioLoader.load('shotgun-fire.mp3', (buffer) => {
+    shotgunSound.setBuffer(buffer);
+    shotgunSound.setLoop(false);
+    shotgunSound.setVolume(gunVolume);
+});
+
 const maxRecoil = 0.15;
+const maxShotgunRecoil = 0.32;
 const recoilRecover = 8;
 const ammoMax = 10;
 const ammoTotal = 64;
+const shotgunAmmoMax   = 7;
+const shotgunAmmoTotal = 40;
+const FIRE_RATE = 0.35;         // pistol — ~2.9 rps
+const SHOTGUN_FIRE_RATE = 0.85; // SPAS-12 pump cadence
 
 let recoil = 0;
-let muzzleFlashTimer = 0;
+let shotgunRecoil = 0;
 let ammoCurrent = ammoMax;
 let fireCooldown = 0;
-const FIRE_RATE = 0.35; // seconds between shots (~2.9 rps)
 let ammoReserve = ammoTotal - ammoMax;
+let shotgunAmmoCurrent = shotgunAmmoMax;
+let shotgunAmmoReserve = shotgunAmmoTotal - shotgunAmmoMax;
+let _shotgunReloadInterval = null;
 
 // Empty mag sound
 const emptySound = new THREE.Audio(listener);
@@ -820,59 +857,91 @@ audioLoader.load('empty.mp3', (buffer) => {
 
 // Shooting logic
 function shootHandler(event) {
-    if (controls.isLocked === true && event.button === 0 && !isDead && fireCooldown <= 0 && !thrownPistol) {
-        if (ammoCurrent > 0) {
-            fireCooldown = FIRE_RATE;
-            gunshotSound.stop();
-            gunshotSound.play();
-            recoil = maxRecoil;
-            ammoCurrent--;
+    if (controls.isLocked === true && event.button === 0 && !isDead && fireCooldown <= 0 && !thrownPistol && weaponSwitchState === 'idle') {
+        const curAmmo = activeWeapon === 'shotgun' ? shotgunAmmoCurrent : ammoCurrent;
+        if (curAmmo > 0) {
+            if (activeWeapon === 'shotgun') {
+                cancelShotgunReload();
+                isReloading = false;
+                fireCooldown = SHOTGUN_FIRE_RATE;
+                shotgunSound.stop();
+                shotgunSound.play();
+                shotgunRecoil = maxShotgunRecoil;
+                shotgunAmmoCurrent--;
+                const sgFlash = camera.getObjectByName('ShotgunMuzzleFlash');
+                if (sgFlash) {
+                    sgFlash.material.map = muzzleTextures[Math.floor(Math.random() * muzzleTextures.length)];
+                    sgFlash.visible = true;
+                }
+            } else {
+                fireCooldown = FIRE_RATE;
+                gunshotSound.stop();
+                gunshotSound.play();
+                recoil = maxRecoil;
+                ammoCurrent--;
+                const pFlash = camera.getObjectByName('PistolMuzzleFlash');
+                if (pFlash) {
+                    pFlash.material.map = muzzleTextures[Math.floor(Math.random() * muzzleTextures.length)];
+                    pFlash.visible = true;
+                }
+            }
+            muzzleFlashTimer = 0.08;
             updateAmmoDisplay();
 
-            broadcastShoot();
-
-            if (muzzleFlash) {
-                const idx = Math.floor(Math.random() * muzzleTextures.length);
-                muzzleFlash.material.map = muzzleTextures[idx];
-                muzzleFlash.visible = true;
-                muzzleFlashTimer = 0.1;
-            }
+            broadcastShoot(activeWeapon);
 
             // Raycast from camera for target and remote player hits
             const origin = new THREE.Vector3();
             const dir = new THREE.Vector3();
             camera.getWorldPosition(origin);
             camera.getWorldDirection(dir);
-            raycaster.set(origin, dir);
 
-            if (targetObjects.length > 0) {
-                const intersects = raycaster.intersectObjects(targetObjects, true);
-                if (intersects.length > 0) {
-                    score += 1;
-                    setScore(score);
-                    showTargetHitMessage();
-                    showScorePlus();
-                    spawnImpactEffect(intersects[0]);
+            function firePellet(pelletDir, bodyDmg, headDmg) {
+                raycaster.set(origin, pelletDir);
+                let hitTarget = false;
+                if (targetObjects.length > 0) {
+                    const tHits = raycaster.intersectObjects(targetObjects, true);
+                    if (tHits.length > 0) { hitTarget = true; spawnImpactEffect(tHits[0]); }
                 }
+                let wallHit = null;
+                if (mapScene) {
+                    const wHits = raycaster.intersectObject(mapScene, true);
+                    if (wHits.length > 0) wallHit = wHits[0];
+                }
+                const remoteHit = getRemotePlayerHit(raycaster);
+                if (remoteHit && (!wallHit || wallHit.distance > remoteHit.intersect.distance)) {
+                    const dist = camera.position.distanceTo(remoteHit.intersect.point);
+                    const dmg = applyDamageFalloff(remoteHit.isHeadshot ? headDmg : bodyDmg, dist, activeWeapon === 'shotgun');
+                    broadcastPlayerHit(remoteHit.playerId, dmg);
+                    spawnImpactEffect(remoteHit.intersect);
+                    showHitPopup(remoteHit.bodyPos, dmg, remoteHit.isHeadshot);
+                    spawnBloodEffect(remoteHit.intersect.point);
+                } else if (wallHit) {
+                    spawnBulletHole(wallHit);
+                }
+                return hitTarget;
             }
 
-            // Cast against map geometry first to detect wall occlusion
-            let firstWallHit = null;
-            if (mapScene) {
-                const wallHits = raycaster.intersectObject(mapScene, true);
-                if (wallHits.length > 0) firstWallHit = wallHits[0];
-            }
-
-            const remoteHit = getRemotePlayerHit(raycaster);
-            if (remoteHit && (!firstWallHit || firstWallHit.distance > remoteHit.intersect.distance)) {
-                const dist = camera.position.distanceTo(remoteHit.intersect.point);
-                const damage = applyDamageFalloff(remoteHit.isHeadshot ? 25 : 15, dist);
-                broadcastPlayerHit(remoteHit.playerId, damage);
-                spawnImpactEffect(remoteHit.intersect);
-                showHitPopup(remoteHit.bodyPos, damage, remoteHit.isHeadshot);
-                spawnBloodEffect(remoteHit.intersect.point);
-            } else if (firstWallHit) {
-                spawnBulletHole(firstWallHit);
+            if (activeWeapon === 'shotgun') {
+                const PELLETS = 8, SPREAD = 0.06;
+                const right = new THREE.Vector3();
+                const up = new THREE.Vector3();
+                if (Math.abs(dir.y) < 0.9) right.crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
+                else right.crossVectors(dir, new THREE.Vector3(1, 0, 0)).normalize();
+                up.crossVectors(right, dir);
+                let anyTarget = false;
+                for (let i = 0; i < PELLETS; i++) {
+                    const r = SPREAD * Math.sqrt(Math.random());
+                    const theta = Math.random() * Math.PI * 2;
+                    const pelletDir = dir.clone()
+                        .addScaledVector(right, r * Math.cos(theta))
+                        .addScaledVector(up, r * Math.sin(theta))
+                        .normalize();
+                    if (firePellet(pelletDir, 20, 45)) anyTarget = true;
+                }
+                if (anyTarget) { score += 1; setScore(score); showTargetHitMessage(); showScorePlus(); }
+            } else {
+                if (firePellet(dir, 15, 25)) { score += 1; setScore(score); showTargetHitMessage(); showScorePlus(); }
             }
         } else {
             emptySound.stop();
@@ -888,6 +957,12 @@ const reloadSound = new THREE.Audio(listener);
 audioLoader.load('mag.mp3', (buffer) => {
     reloadSound.setBuffer(buffer);
     reloadSound.setVolume(0.5);
+});
+
+const shotgunReloadSound = new THREE.Audio(listener);
+audioLoader.load('shotgun-reload.mp3', (buffer) => {
+    shotgunReloadSound.setBuffer(buffer);
+    shotgunReloadSound.setVolume(0.6);
 });
 // END - Reload sound
 
@@ -922,9 +997,11 @@ audioLoader.load('death.mp3', (buffer) => {
 
 // Remote player gunshot (positional — spatialized at the shooter's position)
 document.addEventListener('remote-gunshot', (e) => {
-    if (!gunshotSound.buffer) return;
+    const isShotgun = e.detail.weapon === 'shotgun';
+    const buf = isShotgun ? shotgunSound.buffer : gunshotSound.buffer;
+    if (!buf) return;
     const sound = new THREE.PositionalAudio(listener);
-    sound.setBuffer(gunshotSound.buffer);
+    sound.setBuffer(buf);
     sound.setVolume(gunVolume);
     sound.setRefDistance(4);
     sound.setRolloffFactor(1.5);
@@ -1146,11 +1223,16 @@ setStaminaBar(100);
 
 // Update ammo display
 function updateAmmoDisplay() {
+    const isShotgun = activeWeapon === 'shotgun';
+    const cur = isShotgun ? shotgunAmmoCurrent : ammoCurrent;
+    const res = isShotgun ? shotgunAmmoReserve : ammoReserve;
     const ammoCurrentElem = document.getElementById('ammo-current');
     const ammoTotalElem = document.getElementById('ammo-total');
-    if (ammoCurrentElem) ammoCurrentElem.textContent = ammoCurrent;
-    if (ammoTotalElem) ammoTotalElem.textContent = ammoReserve;
-    showReloadMessage(ammoCurrent === 0 && ammoReserve > 0 && !isReloading);
+    if (ammoCurrentElem) ammoCurrentElem.textContent = cur;
+    if (ammoTotalElem) ammoTotalElem.textContent = res;
+    const gunIcon = document.getElementById('gun-icon');
+    if (gunIcon) gunIcon.src = isShotgun ? 'shotgun.png' : 'pistol.png';
+    showReloadMessage(cur === 0 && res > 0 && !isReloading);
 }
 
 function showReloadMessage(show) {
@@ -1166,16 +1248,54 @@ function showReloadMessage(show) {
     }
 }
 
-function showStaminaMessage(show) {
+const STAMINA_MSG_TEXT = "I need to rest or walk to regain stamina, or I'll start to lose health.";
+let _staminaMsgActive = false;      // true while message is on screen (typing or fully typed)
+let _staminaMsgInterval = null;     // typewriter interval
+let _staminaMsgFadeTimeout = null;  // hide-after-fade timeout
+let _staminaMsgTypingDone = false;  // true once all characters have been typed
+let _staminaMsgFadePending = false; // fade was requested before typing finished
+
+function _doFadeStaminaMsg() {
     const msg = document.getElementById('stamina-message');
-    if (msg) {
-        if (show) {
-            msg.style.display = 'block';
-            msg.classList.add('flashing');
-        } else {
-            msg.style.display = 'none';
-            msg.classList.remove('flashing');
+    if (!msg) return;
+    _staminaMsgActive = false;
+    _staminaMsgFadePending = false;
+    msg.style.opacity = '0';
+    _staminaMsgFadeTimeout = setTimeout(() => {
+        msg.style.display = 'none';
+        msg.textContent = '';
+        _staminaMsgFadeTimeout = null;
+        _staminaMsgTypingDone = false;
+    }, 2000);
+}
+
+function showStaminaMessage() {
+    const msg = document.getElementById('stamina-message');
+    if (!msg || _staminaMsgActive || _staminaMsgFadeTimeout) return;
+    _staminaMsgActive = true;
+    _staminaMsgTypingDone = false;
+    _staminaMsgFadePending = false;
+    msg.style.display = 'block';
+    msg.style.opacity = '1';
+    msg.textContent = '';
+    let i = 0;
+    _staminaMsgInterval = setInterval(() => {
+        msg.textContent = STAMINA_MSG_TEXT.slice(0, ++i);
+        if (i >= STAMINA_MSG_TEXT.length) {
+            clearInterval(_staminaMsgInterval);
+            _staminaMsgInterval = null;
+            _staminaMsgTypingDone = true;
+            if (_staminaMsgFadePending) _doFadeStaminaMsg();
         }
+    }, 38);
+}
+
+function hideStaminaMessage() {
+    if (!_staminaMsgActive) return;
+    if (!_staminaMsgTypingDone) {
+        _staminaMsgFadePending = true; // wait until typing completes
+    } else {
+        _doFadeStaminaMsg();
     }
 }
 
@@ -1185,6 +1305,8 @@ function setScore(val) {
     score = val;
     const scoreboardValue = document.getElementById('scoreboard-value');
     if (scoreboardValue) scoreboardValue.textContent = score;
+    const hudScoreValue = document.getElementById('hud-score-value');
+    if (hudScoreValue) hudScoreValue.textContent = score;
 }
 
 let scorePlusTimeout = null;
@@ -1232,7 +1354,73 @@ function hideLeaderboard() {
     if (overlay) overlay.style.display = 'none';
 }
 
+function startWeaponSwitch(target) {
+    if (target === activeWeapon && weaponSwitchState === 'idle') return;
+    if (target === pendingWeapon) return;
+    if (thrownPistol) return;
+    pendingWeapon = target;
+    weaponSwitchState = 'holstering';
+    weaponSwitchProgress = 0;
+    if (isReloading) { cancelShotgunReload(); isReloading = false; }
+    isRaisingGun = false;
+    reloadAnimProgress = 0;
+}
+
 // Screen shake
+function setActiveWeapon(weapon) {
+    activeWeapon = weapon;
+    const shotgunMesh = camera.getObjectByName('Shotgun');
+    const pistolMesh  = camera.getObjectByName('Pistol');
+    if (shotgunMesh) shotgunMesh.visible = weapon === 'shotgun';
+    if (pistolMesh)  pistolMesh.visible  = weapon === 'pistol' && !thrownPistol;
+    updateAmmoDisplay();
+}
+
+function cancelShotgunReload() {
+    if (_shotgunReloadInterval) {
+        clearInterval(_shotgunReloadInterval);
+        _shotgunReloadInterval = null;
+    }
+    if (shotgunReloadSound.isPlaying) shotgunReloadSound.stop();
+}
+
+function startShotgunReload() {
+    isReloading = true;
+    isRaisingGun = false;
+    reloadAnimProgress = 0;
+    cancelShotgunReload();
+
+    shotgunReloadSound.onEnded = () => {
+        if (!isReloading) return;
+        if (_shotgunReloadInterval) {
+            clearInterval(_shotgunReloadInterval);
+            _shotgunReloadInterval = null;
+        }
+        isReloading = false;
+        isRaisingGun = reloadAnimProgress > 0;
+        updateAmmoDisplay();
+    };
+
+    shotgunReloadSound.play();
+
+    _shotgunReloadInterval = setInterval(() => {
+        if (!isReloading || shotgunAmmoCurrent >= shotgunAmmoMax || shotgunAmmoReserve <= 0) {
+            if (_shotgunReloadInterval) {
+                clearInterval(_shotgunReloadInterval);
+                _shotgunReloadInterval = null;
+            }
+            isReloading = false;
+            isRaisingGun = reloadAnimProgress > 0;
+            if (shotgunReloadSound.isPlaying) shotgunReloadSound.stop();
+            updateAmmoDisplay();
+            return;
+        }
+        shotgunAmmoCurrent++;
+        shotgunAmmoReserve--;
+        updateAmmoDisplay();
+    }, 440);
+}
+
 function triggerShake(intensity) {
     shakeIntensity = Math.max(shakeIntensity, intensity);
     shakeAngle = Math.random() * Math.PI * 2;
@@ -1359,8 +1547,16 @@ function throwGrenade() {
     broadcastGrenadeThrow(pos, vel);
 }
 
-// Damage falloff — full damage ≤8 units, linear fade to 55% at ≥25 units
-function applyDamageFalloff(base, dist) {
+// Damage falloff — pistol: full ≤8 units, linear to 55% at ≥25 units
+//                  shotgun: full ≤5 units, quadratic to 20% at ≥18 units (pellets lose energy fast)
+function applyDamageFalloff(base, dist, isShotgun = false) {
+    if (isShotgun) {
+        const FULL = 5, FAR = 18, MIN_F = 0.20;
+        if (dist <= FULL) return base;
+        if (dist >= FAR)  return Math.max(1, Math.round(base * MIN_F));
+        const t = (dist - FULL) / (FAR - FULL);
+        return Math.max(1, Math.round(base * (1 - t * t * (1 - MIN_F))));
+    }
     const FULL = 8, FAR = 25, MIN_F = 0.55;
     if (dist <= FULL) return base;
     if (dist >= FAR)  return Math.max(1, Math.round(base * MIN_F));
@@ -1528,8 +1724,9 @@ function triggerDeath() {
     deathSound.stop();
     deathSound.play();
     controls.unlock();
-    broadcastDeath(lastHitBy);
+    broadcastDeath(lastHitBy, lastHitWasMelee);
     lastHitBy = null;
+    lastHitWasMelee = false;
     isPlanting = false;
     isDefusing = false;
     plantTimer = 0;
@@ -1576,10 +1773,13 @@ function respawn() {
     stamina = staminaMax;
     ammoCurrent = ammoMax;
     ammoReserve = ammoTotal - ammoMax;
+    shotgunAmmoCurrent = shotgunAmmoMax;
+    shotgunAmmoReserve = shotgunAmmoTotal - shotgunAmmoMax;
     velocity.set(0, 0, 0);
     controlsObject.position.copy(pickSpawnPoint());
     controls.setRotation(controls._yaw, 0); // keep current yaw, reset pitch to level
     isCrouching = false;
+    cancelShotgunReload();
     isReloading = false;
     setHealthBar(100);
     setStaminaBar(100);
@@ -1817,10 +2017,13 @@ document.addEventListener('snd-round-start', e => {
     stamina = staminaMax;
     ammoCurrent = ammoMax;
     ammoReserve = ammoTotal - ammoMax;
+    shotgunAmmoCurrent = shotgunAmmoMax;
+    shotgunAmmoReserve = shotgunAmmoTotal - shotgunAmmoMax;
     grenadeCount = GRENADE_MAX;
     grenadeRecharge = 0;
     velocity.set(0, 0, 0);
     isCrouching = false;
+    cancelShotgunReload();
     isReloading = false;
 
     setHealthBar(100);
@@ -1930,6 +2133,8 @@ document.addEventListener('snd-quit', () => {
     stopBombBeep();
     removePlantedBomb();
     updateSndProgressBar(false, 0, 0);
+    cancelShotgunReload();
+    isReloading = false;
 
     if (isDead) {
         isDead = false;
@@ -1937,12 +2142,64 @@ document.addEventListener('snd-quit', () => {
         stamina = staminaMax;
         ammoCurrent = ammoMax;
         ammoReserve = ammoTotal - ammoMax;
+        shotgunAmmoCurrent = shotgunAmmoMax;
+        shotgunAmmoReserve = shotgunAmmoTotal - shotgunAmmoMax;
         velocity.set(0, 0, 0);
         controlsObject.position.copy(pickSpawnPoint());
         setHealthBar(100);
         setStaminaBar(100);
         updateAmmoDisplay();
     }
+
+    const hideIds = [
+        'snd-team-badge', 'snd-timer-display', 'snd-match-end-overlay', 'snd-spectate-overlay',
+        'snd-round-start-overlay', 'snd-round-end-overlay',
+        'snd-plant-prompt', 'snd-defuse-prompt', 'death-overlay',
+    ];
+    hideIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
+});
+
+document.addEventListener('player-left-room', () => {
+    cancelShotgunReload();
+    isReloading  = false;
+    isDead       = false;
+    health       = 100;
+    stamina      = staminaMax;
+    ammoCurrent  = ammoMax;
+    ammoReserve  = ammoTotal - ammoMax;
+    shotgunAmmoCurrent = shotgunAmmoMax;
+    shotgunAmmoReserve = shotgunAmmoTotal - shotgunAmmoMax;
+    velocity.set(0, 0, 0);
+    controlsObject.position.copy(pickSpawnPoint());
+    setHealthBar(100);
+    setStaminaBar(100);
+    updateAmmoDisplay();
+
+    // Cancel thrown pistol
+    if (thrownPistol) {
+        scene.remove(thrownPistol.mesh);
+        thrownPistol = null;
+        const p = camera.getObjectByName('Pistol');
+        if (p) p.visible = true;
+    }
+
+    // Reset SND state
+    sndMode      = false;
+    myTeam       = null;
+    hasBomb      = false;
+    isSpectating = false;
+    sndPhase     = 'waiting';
+    isPlanting   = false;
+    isDefusing   = false;
+    plantTimer   = 0;
+    defuseTimer  = 0;
+    stopPlantingSound();
+    stopBombBeep();
+    removePlantedBomb();
+    updateSndProgressBar(false, 0, 0);
 
     const hideIds = [
         'snd-team-badge', 'snd-timer-display', 'snd-match-end-overlay', 'snd-spectate-overlay',
@@ -1963,6 +2220,22 @@ function animate() {
     // Cap delta to prevent huge position jumps when the tab was in the background
     const delta = Math.min(clock.getDelta(), 0.05);
 
+    // Weapon switch animation
+    if (weaponSwitchState !== 'idle') {
+        weaponSwitchProgress = Math.min(1, weaponSwitchProgress + WEAPON_SWITCH_SPEED * delta);
+        if (weaponSwitchProgress >= 1) {
+            if (weaponSwitchState === 'holstering') {
+                setActiveWeapon(pendingWeapon);
+                weaponSwitchState = 'drawing';
+                weaponSwitchProgress = 0;
+            } else {
+                weaponSwitchState = 'idle';
+                weaponSwitchProgress = 0;
+                pendingWeapon = null;
+            }
+        }
+    }
+
     // While dead: spectate (SND) or drop to floor (FFA), keep networking
     if (isDead) {
         if (isSpectating) {
@@ -1979,7 +2252,7 @@ function animate() {
             controlsObject.position.y += (0.3 - controlsObject.position.y) * 5 * delta;
         }
         updateRemotePlayers(delta);
-        broadcastState(controlsObject, health);
+        broadcastState(controlsObject, health, activeWeapon);
         renderer.render(scene, camera);
         return;
     }
@@ -2053,12 +2326,7 @@ function animate() {
 
     // Pistol recoil recovery
     recoil += (0 - recoil) * recoilRecover * delta;
-
-    // Muzzle flash timer
-    if (muzzleFlash && muzzleFlash.visible) {
-        muzzleFlashTimer -= delta;
-        if (muzzleFlashTimer <= 0) muzzleFlash.visible = false;
-    }
+    shotgunRecoil += (0 - shotgunRecoil) * (recoilRecover * 0.7) * delta;
 
     // Reload animation
     if (isReloading && reloadAnimProgress < 1) {
@@ -2082,7 +2350,8 @@ function animate() {
         if (stamina > staminaMax) stamina = staminaMax;
     }
 
-    showStaminaMessage(stamina <= 0);
+    if (stamina <= 5) showStaminaMessage();
+    if (stamina >= 15) hideStaminaMessage();
 
     // Health loss when running with zero stamina
     if (!isWalking && !isCrouching && isMoving && stamina === 0) {
@@ -2174,7 +2443,7 @@ function animate() {
     // Pistol bobbing effect (hidden while pistol is in flight)
     const pistol = camera.children.find(obj => obj.name === "Pistol");
     if (pistol) {
-        pistol.visible = !thrownPistol;
+        pistol.visible = activeWeapon === 'pistol' && !thrownPistol;
         if (!thrownPistol) {
             let basePosition = new THREE.Vector3(0.4, -0.3, -0.8);
 
@@ -2188,9 +2457,41 @@ function animate() {
 
             if (reloadAnimProgress > 0) basePosition.y += -0.7 * reloadAnimProgress;
 
+            // Weapon switch drop/rise
+            const _pt = weaponSwitchProgress;
+            const _pe = _pt * _pt * (3 - 2 * _pt); // smoothstep
+            if (weaponSwitchState === 'holstering' && activeWeapon === 'pistol')
+                basePosition.y -= 0.9 * _pe;
+            else if (weaponSwitchState === 'drawing' && activeWeapon === 'pistol')
+                basePosition.y -= 0.9 * (1 - _pe);
+
             pistol.position.set(basePosition.x, basePosition.y, basePosition.z);
             pistol.rotation.set(0 + recoil, -Math.PI / 2, 0);
         }
+    }
+
+    // Shotgun bobbing & recoil
+    const shotgunMesh = camera.children.find(obj => obj.name === "Shotgun");
+    if (shotgunMesh) {
+        let basePos = new THREE.Vector3(0.3, -0.38, -0.75);
+        if (!isReloading && !isRaisingGun && isMoving) {
+            const time = clock.getElapsedTime();
+            const bobSpeed = isWalking ? 4 : isCrouching ? 2 : 8;
+            basePos.x += Math.sin(time * bobSpeed) * 0.03;
+            basePos.y += Math.abs(Math.sin(time * bobSpeed)) * 0.05;
+        }
+        if (reloadAnimProgress > 0 && activeWeapon === 'shotgun') basePos.y += -0.7 * reloadAnimProgress;
+
+        // Weapon switch drop/rise
+        const _st = weaponSwitchProgress;
+        const _se = _st * _st * (3 - 2 * _st); // smoothstep
+        if (weaponSwitchState === 'holstering' && activeWeapon === 'shotgun')
+            basePos.y -= 0.9 * _se;
+        else if (weaponSwitchState === 'drawing' && activeWeapon === 'shotgun')
+            basePos.y -= 0.9 * (1 - _se);
+
+        shotgunMesh.position.set(basePos.x, basePos.y, basePos.z);
+        shotgunMesh.rotation.set(shotgunRecoil, Math.PI, 0);
     }
 
     // Thrown pistol physics & return
@@ -2229,16 +2530,17 @@ function animate() {
             tp.mesh.rotation.x += tpSpeed * 0.5 * delta;
             tp.mesh.rotation.z += tpSpeed * 0.2 * delta;
 
-            // Player proximity hit
+            // Player proximity hit — deal damage then bounce off like a wall
             if (!tp.hitSomeone) {
                 const hits = getPlayersInRange(tp.mesh.position, 0.8);
                 if (hits.length > 0) {
-                    broadcastPlayerHit(hits[0].id, 35);
+                    broadcastPlayerHit(hits[0].id, 35, true);
                     showHitPopup(tp.mesh.position, 35, false);
                     tp.hitSomeone = true;
-                    tp.returning = true;
-                    tp.returnTimer = PISTOL_RETURN_DELAY;
-                    broadcastPistolReturn();
+                    // Bounce: reverse horizontal velocity, add slight upward kick
+                    tp.velocity.x *= -0.3;
+                    tp.velocity.z *= -0.3;
+                    tp.velocity.y = Math.abs(tp.velocity.y) * 0.2 + 1.2;
                 }
             }
 
@@ -2253,15 +2555,14 @@ function animate() {
             if (tp.returnTimer > 0) {
                 tp.returnTimer -= delta;
             } else {
-                const camPos = new THREE.Vector3();
-                camera.getWorldPosition(camPos);
-                const toCamera = camPos.sub(tp.mesh.position);
-                const dist = toCamera.length();
-                if (dist < 0.5) {
+                const handTarget = new THREE.Vector3(0.4, -0.3, -0.8).applyMatrix4(camera.matrixWorld);
+                const toHand = handTarget.sub(tp.mesh.position);
+                const dist = toHand.length();
+                if (dist < 0.35) {
                     scene.remove(tp.mesh);
                     thrownPistol = null;
                 } else {
-                    tp.mesh.position.addScaledVector(toCamera.normalize(), PISTOL_RETURN_SPEED * delta);
+                    tp.mesh.position.addScaledVector(toHand.normalize(), PISTOL_RETURN_SPEED * delta);
                     tp.mesh.rotation.x += 15 * delta;
                 }
             }
@@ -2368,6 +2669,17 @@ function animate() {
         }
     }
 
+    // Muzzle flash timer
+    if (muzzleFlashTimer > 0) {
+        muzzleFlashTimer -= delta;
+        if (muzzleFlashTimer <= 0) {
+            const pFlash = camera.getObjectByName('PistolMuzzleFlash');
+            const sgFlash = camera.getObjectByName('ShotgunMuzzleFlash');
+            if (pFlash) pFlash.visible = false;
+            if (sgFlash) sgFlash.visible = false;
+        }
+    }
+
     // SND plant / defuse / prompt logic
     if (sndMode) {
         if (isPlanting && hasBomb && sndPhase === 'active' && isInSite()) {
@@ -2417,7 +2729,7 @@ function animate() {
 
     // Multiplayer: interpolate remote players and broadcast local state
     updateRemotePlayers(delta);
-    broadcastState(controlsObject, health);
+    broadcastState(controlsObject, health, activeWeapon);
 
     // Screen shake
     if (shakeIntensity > 0.0005) {
@@ -2434,9 +2746,10 @@ animate();
 initNetwork(
     scene,
     () => { gameActive = true; },
-    (damage, shooterId) => {
+    (damage, shooterId, isMelee) => {
         if (isDead) return;
         lastHitBy = shooterId;
+        lastHitWasMelee = !!isMelee;
         health -= damage;
         if (health < 0) health = 0;
         setHealthBar(health);

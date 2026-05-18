@@ -119,27 +119,24 @@ function createPlayerMesh(name, color) {
     const headMesh = mesh(new THREE.SphereGeometry(0.27, 12, 12), skinMat, 0, 1.73, 0);
     headMesh.userData.isHead = true;
 
-    // Gun proxy parented to a sub-group so muzzle flash inherits its position
+    // ---- Pistol proxy ----
     const gunGroup = new THREE.Group();
     gunGroup.position.set(0.34, 1.05, -0.55);
     group.add(gunGroup);
 
-    // Slide (top of pistol)
     const slide = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.09, 0.22), gunMat);
     slide.position.set(0, 0.03, -0.04);
     gunGroup.add(slide);
 
-    // Barrel (extends forward from slide)
     const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.3), gunMat);
     barrel.position.set(0, 0.025, -0.15);
     gunGroup.add(barrel);
 
-    // Grip (handle below slide)
     const grip = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.14, 0.08), gunMat);
     grip.position.set(0, -0.065, 0.05);
     gunGroup.add(grip);
 
-    // Muzzle flash at barrel tip
+    // Muzzle flash shared — attached to pistol group (swapped to shotgun group on weapon change)
     const muzzleFlash = new THREE.Sprite(new THREE.SpriteMaterial({
         map: getMuzzleTex(),
         transparent: true,
@@ -150,6 +147,44 @@ function createPlayerMesh(name, color) {
     muzzleFlash.scale.set(0.38, 0.38, 0.38);
     muzzleFlash.visible = false;
     gunGroup.add(muzzleFlash);
+
+    // ---- Shotgun proxy ----
+    const sgGroup = new THREE.Group();
+    sgGroup.position.set(0.28, 1.02, -0.52);
+    sgGroup.visible = false;
+    group.add(sgGroup);
+
+    // Receiver (main body)
+    const sgReceiver = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.095, 0.46), gunMat);
+    sgReceiver.position.set(0, 0, 0);
+    sgGroup.add(sgReceiver);
+
+    // Long barrel extending forward
+    const sgBarrel = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.52), gunMat);
+    sgBarrel.position.set(0, 0.04, -0.44);
+    sgGroup.add(sgBarrel);
+
+    // Pump handle under barrel
+    const sgPump = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.055, 0.14), gunMat);
+    sgPump.position.set(0, -0.01, -0.22);
+    sgGroup.add(sgPump);
+
+    // Stock at the back
+    const sgStock = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.085, 0.22), gunMat);
+    sgStock.position.set(0, -0.01, 0.26);
+    sgGroup.add(sgStock);
+
+    // Shotgun muzzle flash
+    const sgMuzzleFlash = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: getMuzzleTex(),
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+    }));
+    sgMuzzleFlash.position.set(0, 0.04, -0.72);
+    sgMuzzleFlash.scale.set(0.55, 0.55, 0.55);
+    sgMuzzleFlash.visible = false;
+    sgGroup.add(sgMuzzleFlash);
 
     // Name label sprite above head
     const canvas = document.createElement('canvas');
@@ -173,7 +208,7 @@ function createPlayerMesh(name, color) {
     label.scale.set(1.4, 0.35, 1);
     group.add(label);
 
-    return { group, muzzleFlash };
+    return { group, muzzleFlash, sgMuzzleFlash, gunGroup, sgGroup };
 }
 
 function addRemotePlayer(state) {
@@ -181,7 +216,7 @@ function addRemotePlayer(state) {
     playerNames.set(state.id, state.name || 'Player');
     if (!playerStats.has(state.id)) playerStats.set(state.id, { kills: 0, deaths: 0 });
     const color = colorForId(state.id);
-    const { group, muzzleFlash } = createPlayerMesh(state.name, color);
+    const { group, muzzleFlash, sgMuzzleFlash, gunGroup, sgGroup } = createPlayerMesh(state.name, color);
     const y = (state.position?.y ?? 2) - 1.9;
     group.position.set(state.position?.x ?? 0, y, state.position?.z ?? 0);
     group.rotation.y = state.yaw ?? 0;
@@ -206,6 +241,9 @@ function addRemotePlayer(state) {
         targetPos: new THREE.Vector3(group.position.x, group.position.y, group.position.z),
         targetYaw: state.yaw ?? 0,
         muzzleFlash,
+        sgMuzzleFlash,
+        gunGroup,
+        sgGroup,
         muzzleTimer: 0,
         dying: false,
         dyingTimer: 0,
@@ -213,6 +251,7 @@ function addRemotePlayer(state) {
         footstepCarrier,
         footstepAudio,
         prevPos: group.position.clone(),
+        weapon: 'pistol',
     });
     refreshPlayerCount();
 }
@@ -257,6 +296,7 @@ export function updateRemotePlayers(delta) {
             if (data.muzzleTimer <= 0) {
                 data.muzzleTimer = 0;
                 data.muzzleFlash.visible = false;
+                data.sgMuzzleFlash.visible = false;
             }
         }
 
@@ -487,7 +527,16 @@ const ROAST_MSGS = [
     'ended',
 ];
 
-function appendKillFeed(killerId, victimId) {
+// Melee kill messages — {k} = killer, {v} = victim
+const MELEE_MSGS = [
+    { template: '{k} melee\'d {v}',              victimFirst: false },
+    { template: '{k} shanked {v}',               victimFirst: false },
+    { template: '{k} shoved the pistol into {v}',victimFirst: false },
+    { template: '{v} failed to catch the pistol',victimFirst: true  },
+    { template: '{k} bonked {v}',                victimFirst: false },
+];
+
+function appendKillFeed(killerId, victimId, melee = false) {
     if (!killerId) return;
     const feed = document.getElementById('kill-feed');
     if (!feed) return;
@@ -496,14 +545,24 @@ function appendKillFeed(killerId, victimId) {
     const victimName = victimId === myPlayerId ? myPlayerName : (playerNames.get(victimId) || 'Unknown');
     const killerColor = colorToCss(colorForId(killerId));
     const victimColor = colorToCss(colorForId(victimId));
-    const roast = ROAST_MSGS[Math.floor(Math.random() * ROAST_MSGS.length)];
+
+    let html;
+    if (melee) {
+        const m = MELEE_MSGS[Math.floor(Math.random() * MELEE_MSGS.length)];
+        html = m.template
+            .replace('{k}', `<span class="kill-name" style="color:${killerColor}">${killerName}</span>`)
+            .replace('{v}', `<span class="kill-name" style="color:${victimColor}">${victimName}</span>`);
+    } else {
+        const roast = ROAST_MSGS[Math.floor(Math.random() * ROAST_MSGS.length)];
+        html =
+            `<span class="kill-name" style="color:${killerColor}">${killerName}</span>` +
+            ` <span class="kill-roast">${roast}</span> ` +
+            `<span class="kill-name" style="color:${victimColor}">${victimName}</span>`;
+    }
 
     const entry = document.createElement('div');
     entry.className = 'kill-entry';
-    entry.innerHTML =
-        `<span class="kill-name" style="color:${killerColor}">${killerName}</span>` +
-        ` <span class="kill-roast">${roast}</span> ` +
-        `<span class="kill-name" style="color:${victimColor}">${victimName}</span>`;
+    entry.innerHTML = html;
 
     feed.appendChild(entry);
     while (feed.children.length > 4) feed.removeChild(feed.firstChild);
@@ -512,7 +571,7 @@ function appendKillFeed(killerId, victimId) {
 
 // ---- Broadcast helpers ----
 let lastBroadcast = 0;
-export function broadcastState(controlsObj, health) {
+export function broadcastState(controlsObj, health, weapon) {
     if (!socket || !currentRoomId) return;
     const now = performance.now();
     if (now - lastBroadcast < 50) return; // 20 fps
@@ -521,23 +580,24 @@ export function broadcastState(controlsObj, health) {
         position: { x: controlsObj.position.x, y: controlsObj.position.y, z: controlsObj.position.z },
         yaw: controlsObj.rotation.y,
         health,
+        weapon,
     });
 }
 
-export function broadcastShoot() {
+export function broadcastShoot(weapon) {
     if (!socket || !currentRoomId) return;
-    socket.emit('player-shoot');
+    socket.emit('player-shoot', { weapon });
 }
 
-export function broadcastPlayerHit(targetId, damage) {
+export function broadcastPlayerHit(targetId, damage, melee = false) {
     if (!socket || !currentRoomId) return;
-    socket.emit('player-hit', { targetId, damage });
+    socket.emit('player-hit', { targetId, damage, melee });
 }
 
 // ---- Hit detection against remote capsules ----
-export function broadcastDeath(killerId) {
+export function broadcastDeath(killerId, melee = false) {
     if (!socket || !currentRoomId) return;
-    socket.emit('player-died', { killerId: killerId || null });
+    socket.emit('player-died', { killerId: killerId || null, melee });
 }
 
 export function broadcastRespawn() {
@@ -607,7 +667,15 @@ export function getPlayersInRange(center, radius) {
     const results = [];
     remotePlayers.forEach((data, id) => {
         if (data.dying) return;
-        const dist = center.distanceTo(data.group.position);
+        const base = data.group.position;
+        // Capsule check: find the closest point on the player's vertical spine segment
+        const capBottom = base.y + 0.1;
+        const capTop    = base.y + 1.8;
+        const closestY  = Math.max(capBottom, Math.min(capTop, center.y));
+        const dx = center.x - base.x;
+        const dz = center.z - base.z;
+        const dy = center.y - closestY;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
         if (dist <= radius) results.push({ id, dist });
     });
     return results;
@@ -671,6 +739,12 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
         if (!data) return;
         data.targetPos.set(state.position.x, state.position.y - 1.9, state.position.z);
         data.targetYaw = state.yaw;
+        if (state.weapon && state.weapon !== data.weapon) {
+            data.weapon = state.weapon;
+            const isShotgun = state.weapon === 'shotgun';
+            data.gunGroup.visible = !isShotgun;
+            data.sgGroup.visible = isShotgun;
+        }
     });
 
     socket.on('player-left', ({ id }) => {
@@ -686,8 +760,8 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
         document.dispatchEvent(new CustomEvent('remote-pistol-returned', { detail: data }));
     });
 
-    socket.on('player-died', ({ id, killerId }) => {
-        appendKillFeed(killerId, id);
+    socket.on('player-died', ({ id, killerId, melee }) => {
+        appendKillFeed(killerId, id, melee);
         explodePlayer(id);
         const victimStats = playerStats.get(id);
         if (victimStats) victimStats.deaths++;
@@ -711,20 +785,25 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
         data.group.visible = true;
     });
 
-    socket.on('player-shoot', ({ id }) => {
+    socket.on('player-shoot', ({ id, weapon }) => {
         const data = remotePlayers.get(id);
         if (!data) return;
-        data.muzzleFlash.visible = true;
+        const isShotgun = weapon === 'shotgun';
+        if (isShotgun) {
+            data.sgMuzzleFlash.visible = true;
+        } else {
+            data.muzzleFlash.visible = true;
+        }
         data.muzzleTimer = 0.1;
         const pos = new THREE.Vector3();
         data.group.getWorldPosition(pos);
-        pos.y += 1.05; // approximate gun height
-        document.dispatchEvent(new CustomEvent('remote-gunshot', { detail: { position: pos } }));
+        pos.y += 1.05;
+        document.dispatchEvent(new CustomEvent('remote-gunshot', { detail: { position: pos, weapon } }));
     });
 
-    socket.on('player-hit', ({ shooterId, targetId, damage }) => {
+    socket.on('player-hit', ({ shooterId, targetId, damage, melee }) => {
         if (targetId === myPlayerId && onHitReceivedCb) {
-            onHitReceivedCb(damage, shooterId);
+            onHitReceivedCb(damage, shooterId, melee);
         }
     });
 
@@ -813,8 +892,10 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
         // Hide post-connection elements
         const inviteSectionEl = document.getElementById('lobby-invite-section');
         const startBtnEl      = document.getElementById('lobby-start-btn');
+        const leaveBtnEl      = document.getElementById('lobby-leave-btn');
         if (inviteSectionEl)  inviteSectionEl.style.display  = 'none';
         if (startBtnEl)       startBtnEl.style.display       = 'none';
+        if (leaveBtnEl)       leaveBtnEl.style.display       = 'none';
         if (playerCountEl)    playerCountEl.style.display    = 'none';
 
         // Restore pre-connection elements
@@ -842,6 +923,9 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
         if (inviteInput) inviteInput.value = link;
         if (inviteSection) inviteSection.style.display = 'flex';
         if (playerCountEl) playerCountEl.style.display = 'block';
+        const leaveBtnReveal = document.getElementById('lobby-leave-btn');
+        if (leaveBtnReveal) leaveBtnReveal.style.display = 'block';
+
         if (startBtn) {
             startBtn.style.display = 'block';
             if (amIHost && roomMode === 'snd') {
@@ -1030,6 +1114,19 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
                 if (lobbyOverlayEl) lobbyOverlayEl.classList.remove('visible');
                 onGameStart();
             }
+        });
+    }
+
+    const leaveBtn = document.getElementById('lobby-leave-btn');
+    if (leaveBtn) {
+        leaveBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            appendChatMessage({ system: true, text: 'You have left the game.' });
+            document.dispatchEvent(new CustomEvent('player-left-room'));
+            socket.disconnect();
+            socket.connect();
+            resetToSolo();
+            if (lobbyOverlayEl) lobbyOverlayEl.classList.remove('visible');
         });
     }
 }

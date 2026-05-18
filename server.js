@@ -273,19 +273,19 @@ io.on('connection', (socket) => {
         io.to(currentRoom).emit('chat-message', { id: socket.id, name: playerName, text: sanitized });
     });
 
-    socket.on('player-shoot', () => {
+    socket.on('player-shoot', ({ weapon } = {}) => {
         if (!currentRoom) return;
-        socket.to(currentRoom).emit('player-shoot', { id: socket.id });
+        socket.to(currentRoom).emit('player-shoot', { id: socket.id, weapon });
     });
 
-    socket.on('player-hit', ({ targetId, damage }) => {
+    socket.on('player-hit', ({ targetId, damage, melee }) => {
         if (!currentRoom) return;
-        io.to(currentRoom).emit('player-hit', { shooterId: socket.id, targetId, damage });
+        io.to(currentRoom).emit('player-hit', { shooterId: socket.id, targetId, damage, melee });
     });
 
-    socket.on('player-died', ({ killerId }) => {
+    socket.on('player-died', ({ killerId, melee }) => {
         if (!currentRoom) return;
-        io.to(currentRoom).emit('player-died', { id: socket.id, killerId: killerId || null });
+        io.to(currentRoom).emit('player-died', { id: socket.id, killerId: killerId || null, melee });
 
         const room = rooms.get(currentRoom);
         if (room?.mode === 'snd' && room.snd &&
