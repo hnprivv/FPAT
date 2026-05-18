@@ -305,6 +305,11 @@ io.on('connection', (socket) => {
         socket.to(currentRoom).emit('grenade-thrown', data);
     });
 
+    socket.on('barrel-exploded', (data) => {
+        if (!currentRoom) return;
+        socket.to(currentRoom).emit('barrel-exploded', data);
+    });
+
     socket.on('pistol-thrown', (data) => {
         if (!currentRoom) return;
         socket.to(currentRoom).emit('pistol-thrown', { id: socket.id, ...data });

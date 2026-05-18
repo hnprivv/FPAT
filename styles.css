@@ -628,6 +628,26 @@ canvas {
 .info-rampage   { color: #f07070; font-weight: 700; }
 .info-unstoppable { color: #c084f0; font-weight: 700; }
 
+.barrel-timer {
+    position: fixed;
+    transform: translate(-50%, -50%);
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: rgba(14, 16, 24, 0.88);
+    border: 2px solid #ff6600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 18px;
+    color: #ffaa44;
+    pointer-events: none;
+    z-index: 500;
+    user-select: none;
+    box-shadow: 0 0 8px rgba(255, 100, 0, 0.5);
+}
+
 .info-footer {
     margin-top: 8px !important;
     font-size: 13px !important;

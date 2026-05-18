@@ -613,6 +613,11 @@ export function broadcastGrenadeThrow(pos, vel) {
     });
 }
 
+export function broadcastBarrelExploded(barrelIndex) {
+    if (!socket || !currentRoomId) return;
+    socket.emit('barrel-exploded', { barrelIndex });
+}
+
 export function broadcastSndRematch() {
     if (!socket || !currentRoomId) return;
     socket.emit('snd-rematch');
@@ -811,6 +816,10 @@ export function initNetwork(scene, onGameStart, onHitReceived) {
 
     socket.on('grenade-thrown', ({ position, velocity }) => {
         document.dispatchEvent(new CustomEvent('remote-grenade-thrown', { detail: { position, velocity } }));
+    });
+
+    socket.on('barrel-exploded', ({ barrelIndex }) => {
+        document.dispatchEvent(new CustomEvent('remote-barrel-exploded', { detail: { barrelIndex } }));
     });
 
     // ---- SND socket events ----

@@ -1,7 +1,7 @@
 import * as THREE from "./node_modules/three/build/three.module.js";
 import { GLTFLoader } from './node_modules/three/examples/jsm/loaders/GLTFLoader.js';
 import { EXRLoader } from './node_modules/three/examples/jsm/loaders/EXRLoader.js';
-import { initNetwork, broadcastState, broadcastShoot, broadcastPlayerHit, broadcastDeath, broadcastRespawn, broadcastBombPlanted, broadcastBombDefused, broadcastBombPlantingStart, broadcastBombPlantingStop, broadcastSndRematch, broadcastSndQuit, broadcastPistolThrow, broadcastPistolReturn, getMyPlayerId, getRemotePlayerHit, updateRemotePlayers, initRemoteAudio, getLeaderboardData, getRemotePlayerPositions, getRemotePlayerPosition, setRemoteFootstepVolume, setWallBoxes, broadcastGrenadeThrow, getPlayersInRange } from './network.js';
+import { initNetwork, broadcastState, broadcastShoot, broadcastPlayerHit, broadcastDeath, broadcastRespawn, broadcastBombPlanted, broadcastBombDefused, broadcastBombPlantingStart, broadcastBombPlantingStop, broadcastSndRematch, broadcastSndQuit, broadcastPistolThrow, broadcastPistolReturn, getMyPlayerId, getRemotePlayerHit, updateRemotePlayers, initRemoteAudio, getLeaderboardData, getRemotePlayerPositions, getRemotePlayerPosition, setRemoteFootstepVolume, setWallBoxes, broadcastGrenadeThrow, getPlayersInRange, broadcastBarrelExploded } from './network.js';
 
 // Asset loading manager
 const loadingManager = new THREE.LoadingManager();
@@ -418,6 +418,15 @@ let grenadeCount   = GRENADE_MAX;
 let grenadeRecharge = 0;
 const grenades       = [];
 const grenadeFlashes = [];
+
+const BARREL_HP               = 4;
+const BARREL_PISTOL_DMG       = 1;
+const BARREL_SHOTGUN_DMG      = 4;
+const BARREL_EXPLOSION_RADIUS = 10;
+const BARREL_FALLOFF_RADIUS   = 20;
+const BARREL_CHAIN_RADIUS     = 6;
+const BARREL_DAMAGE           = 70;
+const barrels                 = [];
 let footstepVolume = 1.0;
 let explosionVolume = 1.0;
 let health = 100;
@@ -436,6 +445,8 @@ let c4Template = null;
 // Add target detection globals
 let targetObjects = [];
 const raycaster = new THREE.Raycaster();
+const _barrelOccRaycaster = new THREE.Raycaster();
+const _barrelOccCamPos    = new THREE.Vector3();
 let targetHitTimeout = null;
 
 // Input handlers
@@ -619,6 +630,16 @@ loader.load('fps2.glb', (gltf) => {
         gltf.scene.traverse((child) => {
             if (child.name && child.name.startsWith('Tar')) targetObjects.push(child);
         });
+    }
+
+    gltf.scene.updateWorldMatrix(false, true);
+    for (let i = 1; i <= 50; i++) {
+        const b = gltf.scene.getObjectByName(`EB${i}`);
+        if (!b) continue;
+        b.traverse(c => { c.userData.barrelIndex = barrels.length; });
+        const wp = new THREE.Vector3();
+        b.getWorldPosition(wp);
+        barrels.push({ mesh: b, hp: BARREL_HP, exploded: false, worldPos: wp });
     }
 
     let pistol = gltf.scene.getObjectByName('Pistol');
@@ -896,6 +917,8 @@ function shootHandler(event) {
             camera.getWorldPosition(origin);
             camera.getWorldDirection(dir);
 
+            const barrelHitsThisShot = new Set();
+
             function firePellet(pelletDir, bodyDmg, headDmg) {
                 raycaster.set(origin, pelletDir);
                 let hitTarget = false;
@@ -904,9 +927,16 @@ function shootHandler(event) {
                     if (tHits.length > 0) { hitTarget = true; spawnImpactEffect(tHits[0]); }
                 }
                 let wallHit = null;
+                let hitBarrelIdx = -1;
                 if (mapScene) {
                     const wHits = raycaster.intersectObject(mapScene, true);
-                    if (wHits.length > 0) wallHit = wHits[0];
+                    if (wHits.length > 0) {
+                        wallHit = wHits[0];
+                        const bIdx = wallHit.object.userData.barrelIndex;
+                        if (bIdx !== undefined && !barrels[bIdx].exploded) {
+                            hitBarrelIdx = bIdx;
+                        }
+                    }
                 }
                 const remoteHit = getRemotePlayerHit(raycaster);
                 if (remoteHit && (!wallHit || wallHit.distance > remoteHit.intersect.distance)) {
@@ -916,6 +946,8 @@ function shootHandler(event) {
                     spawnImpactEffect(remoteHit.intersect);
                     showHitPopup(remoteHit.bodyPos, dmg, remoteHit.isHeadshot);
                     spawnBloodEffect(remoteHit.intersect.point);
+                } else if (hitBarrelIdx >= 0) {
+                    barrelHitsThisShot.add(hitBarrelIdx);
                 } else if (wallHit) {
                     spawnBulletHole(wallHit);
                 }
@@ -940,8 +972,10 @@ function shootHandler(event) {
                     if (firePellet(pelletDir, 20, 45)) anyTarget = true;
                 }
                 if (anyTarget) { score += 1; setScore(score); showTargetHitMessage(); showScorePlus(); }
+                barrelHitsThisShot.forEach(idx => barrelHit(idx, BARREL_SHOTGUN_DMG));
             } else {
                 if (firePellet(dir, 15, 25)) { score += 1; setScore(score); showTargetHitMessage(); showScorePlus(); }
+                barrelHitsThisShot.forEach(idx => barrelHit(idx, BARREL_PISTOL_DMG));
             }
         } else {
             emptySound.stop();
@@ -1531,6 +1565,125 @@ function grenadeExplode(g, idx) {
         }
     }
 }
+
+// ---- Explosive Barrels ----
+function calcBarrelDmg(dist) {
+    if (dist <= BARREL_EXPLOSION_RADIUS) return BARREL_DAMAGE;
+    if (dist >= BARREL_FALLOFF_RADIUS)   return 0;
+    const t = (dist - BARREL_EXPLOSION_RADIUS) / (BARREL_FALLOFF_RADIUS - BARREL_EXPLOSION_RADIUS);
+    return Math.max(0, Math.round(BARREL_DAMAGE * (1 - t)));
+}
+
+function spawnBarrelExplosion(pos) {
+    const geo = new THREE.SphereGeometry(1.2, 12, 12);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 1.0, depthWrite: false });
+    const sphere = new THREE.Mesh(geo, mat);
+    sphere.position.copy(pos);
+    scene.add(sphere);
+    grenadeFlashes.push({ sphere, geo, mat, t: 0 });
+}
+
+function greyOutBarrel(barrel) {
+    barrel.savedMaterials = [];
+    barrel.mesh.traverse(child => {
+        if (!child.isMesh) return;
+        const orig = child.material;
+        barrel.savedMaterials.push({ mesh: child, material: orig });
+        const applyGrey = m => {
+            const g = m.clone();
+            if (g.color) g.color.set(0x777777);
+            g.transparent = true;
+            g.opacity = 0.35;
+            g.depthWrite = false;
+            return g;
+        };
+        child.material = Array.isArray(orig) ? orig.map(applyGrey) : applyGrey(orig);
+    });
+}
+
+function restoreBarrel(idx) {
+    const barrel = barrels[idx];
+    if (!barrel) return;
+    if (barrel.savedMaterials) {
+        barrel.savedMaterials.forEach(({ mesh, material }) => {
+            const toDispose = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            toDispose.forEach(m => m.dispose());
+            mesh.material = material;
+        });
+        barrel.savedMaterials = null;
+    }
+    if (barrel.timerEl) {
+        barrel.timerEl.remove();
+        barrel.timerEl = null;
+    }
+    barrel.restoreTime = null;
+    barrel.hp = BARREL_HP;
+    barrel.exploded = false;
+}
+
+function explodeBarrel(idx, isLocal) {
+    const barrel = barrels[idx];
+    if (!barrel || barrel.exploded) return;
+    barrel.exploded = true;
+
+    const pos = barrel.worldPos.clone();
+
+    greyOutBarrel(barrel);
+
+    const timerEl = document.createElement('div');
+    timerEl.className = 'barrel-timer';
+    timerEl.textContent = '30';
+    document.body.appendChild(timerEl);
+    barrel.timerEl = timerEl;
+    barrel.restoreTime = Date.now() + 30000;
+
+    spawnBarrelExplosion(pos);
+    playGrenadeExplosionSound(pos);
+
+    const distToSelf = pos.distanceTo(camera.position);
+    if (distToSelf < BARREL_FALLOFF_RADIUS) {
+        triggerShake(0.02 * Math.max(0, 1 - distToSelf / BARREL_FALLOFF_RADIUS));
+    }
+
+    setTimeout(() => restoreBarrel(idx), 30000);
+
+    if (isLocal) {
+        broadcastBarrelExploded(idx);
+
+        getPlayersInRange(pos, BARREL_FALLOFF_RADIUS).forEach(({ id, dist }) => {
+            const dmg = calcBarrelDmg(dist);
+            if (dmg > 0) { broadcastPlayerHit(id, dmg); showHitPopup(pos, dmg, false); }
+        });
+
+        if (distToSelf < BARREL_FALLOFF_RADIUS && !isDead) {
+            const selfDmg = calcBarrelDmg(distToSelf);
+            if (selfDmg > 0) {
+                health = Math.max(0, health - selfDmg);
+                setHealthBar(health);
+                triggerShake(selfDmg * 0.0018);
+                if (health <= 0) triggerDeath();
+            }
+        }
+
+        barrels.forEach((other, otherIdx) => {
+            if (otherIdx === idx || other.exploded) return;
+            if (pos.distanceTo(other.worldPos) <= BARREL_CHAIN_RADIUS) {
+                setTimeout(() => explodeBarrel(otherIdx, true), 350 + Math.random() * 200);
+            }
+        });
+    }
+}
+
+function barrelHit(idx, damage) {
+    const barrel = barrels[idx];
+    if (!barrel || barrel.exploded) return;
+    barrel.hp -= damage;
+    if (barrel.hp <= 0) explodeBarrel(idx, true);
+}
+
+document.addEventListener('remote-barrel-exploded', (e) => {
+    explodeBarrel(e.detail.barrelIndex, false);
+});
 
 function throwGrenade() {
     if (grenadeCount <= 0 || isDead) return;
@@ -2738,6 +2891,40 @@ function animate() {
         shakeAngle += 3.5;
         shakeIntensity *= 0.75;
     }
+
+    // Barrel countdown labels — project world pos to screen, hide behind walls
+    const _bv = new THREE.Vector3();
+    camera.getWorldPosition(_barrelOccCamPos);
+    barrels.forEach((barrel, idx) => {
+        if (!barrel.timerEl) return;
+        const secsLeft = Math.ceil((barrel.restoreTime - Date.now()) / 1000);
+        barrel.timerEl.textContent = Math.max(0, secsLeft);
+
+        _bv.copy(barrel.worldPos);
+        _bv.y += 1.8;
+        _bv.project(camera);
+
+        if (_bv.z > 1) { barrel.timerEl.style.display = 'none'; return; }
+
+        // Wall occlusion: ray from camera toward barrel centre
+        let occluded = false;
+        if (mapScene) {
+            const toBarrel = barrel.worldPos.clone().sub(_barrelOccCamPos);
+            const dist = toBarrel.length();
+            _barrelOccRaycaster.set(_barrelOccCamPos, toBarrel.normalize());
+            const hits = _barrelOccRaycaster.intersectObject(mapScene, true)
+                .filter(h => h.object.userData.barrelIndex !== idx);
+            occluded = hits.length > 0 && hits[0].distance < dist;
+        }
+
+        if (occluded) {
+            barrel.timerEl.style.display = 'none';
+        } else {
+            barrel.timerEl.style.display = 'flex';
+            barrel.timerEl.style.left = `${(_bv.x * 0.5 + 0.5) * window.innerWidth}px`;
+            barrel.timerEl.style.top  = `${(-_bv.y * 0.5 + 0.5) * window.innerHeight}px`;
+        }
+    });
 
     renderer.render(scene, camera);
 }
