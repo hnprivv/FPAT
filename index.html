@@ -45,6 +45,7 @@
         </div>
         <div id="hud-score-divider"></div>
         <div id="hud-score">Score: <span id="hud-score-value">0</span></div>
+        <div id="snd-team-badge" style="display:none;">ATTACKER</div>
     </div>
 
     <div id="gun-info">
@@ -90,33 +91,82 @@
         <img src="night.png" alt="Day" style="width:28px;height:28px;display:block;margin:auto;" />
     </button>
 
-    <button id="volume-btn" style="margin-left:10px;">
-        <img src="audio-settings.png" alt="Audio Settings" style="width:28px;height:28px;display:block;margin:auto;" />
+    <button id="settings-btn" style="margin-left:10px;">
+        <img src="audio-settings.png" alt="Settings" style="width:28px;height:28px;display:block;margin:auto;" />
     </button>
 
     <button id="multiplayer-btn" style="margin-left:10px;">
         <img src="multiplayer.png" alt="Multiplayer" style="width:28px;height:28px;display:block;margin:auto;" />
     </button>
 
-    <div id="volume-modal">
-        <div id="volume-modal-content">
-            <h2>AUDIO SETTINGS</h2>
-            <div class="volume-row">
-                <label for="vol-gunshot">Gunshots</label>
-                <input type="range" id="vol-gunshot" min="0" max="1" step="0.01" value="1" />
-                <span id="vol-gunshot-val">100%</span>
+    <div id="settings-modal">
+        <div id="settings-modal-content">
+            <h2>SETTINGS</h2>
+
+            <div class="settings-section">
+                <div class="settings-section-label">GRAPHICS</div>
+                <div class="settings-row">
+                    <span class="settings-row-label">Bloom</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="setting-bloom" />
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="settings-row">
+                    <span class="settings-row-label">Field of View</span>
+                    <input type="range" id="setting-fov" min="70" max="110" step="1" value="75" />
+                    <span id="setting-fov-val" class="settings-val">75</span>
+                </div>
+                <div class="settings-row">
+                    <span class="settings-row-label">Time of Day</span>
+                    <button id="setting-daynightbtn" class="settings-inline-btn">Day</button>
+                </div>
             </div>
-            <div class="volume-row">
-                <label for="vol-footstep">Footsteps</label>
-                <input type="range" id="vol-footstep" min="0" max="1" step="0.01" value="1" />
-                <span id="vol-footstep-val">100%</span>
+
+            <div class="settings-section">
+                <div class="settings-section-label">AUDIO</div>
+                <div class="settings-row">
+                    <span class="settings-row-label">Gunshots</span>
+                    <input type="range" id="vol-gunshot" min="0" max="1" step="0.01" value="1" />
+                    <span id="vol-gunshot-val" class="settings-val">100%</span>
+                </div>
+                <div class="settings-row">
+                    <span class="settings-row-label">Footsteps</span>
+                    <input type="range" id="vol-footstep" min="0" max="1" step="0.01" value="1" />
+                    <span id="vol-footstep-val" class="settings-val">100%</span>
+                </div>
+                <div class="settings-row">
+                    <span class="settings-row-label">Explosions</span>
+                    <input type="range" id="vol-explosion" min="0" max="1" step="0.01" value="1" />
+                    <span id="vol-explosion-val" class="settings-val">100%</span>
+                </div>
             </div>
-            <div class="volume-row">
-                <label for="vol-explosion">Explosions</label>
-                <input type="range" id="vol-explosion" min="0" max="1" step="0.01" value="1" />
-                <span id="vol-explosion-val">100%</span>
+
+            <div class="settings-section">
+                <div class="settings-section-label">CONTROLS</div>
+                <div class="settings-row">
+                    <span class="settings-row-label">Sensitivity</span>
+                    <input type="range" id="setting-sensitivity" min="1" max="10" step="0.5" value="4" />
+                    <span id="setting-sensitivity-val" class="settings-val">4</span>
+                </div>
+                <div class="settings-row">
+                    <span class="settings-row-label">Invert Y</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="setting-inverty" />
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="settings-row">
+                    <span class="settings-row-label">Crouch Mode</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="setting-crouchhold" />
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span id="setting-crouchmode-label" class="settings-sublabel">Toggle</span>
+                </div>
             </div>
-            <p>Click anywhere to close.</p>
+
+            <p class="settings-close-hint">Click outside to close</p>
         </div>
     </div>
 
@@ -269,15 +319,20 @@
 
     <div id="loading-overlay" class="visible">
         <div class="loader-box">
-            <div class="loader-title">LOADING</div>
+            <div id="loader-status" class="loader-title">INITIALIZING...</div>
             <div class="loader-bar">
                 <div id="loader-fill" class="loader-fill" style="width:0%"></div>
             </div>
             <div id="loader-percent" class="loader-percent">0%</div>
+            <div id="loader-terminal" class="loader-terminal"></div>
+            <div id="loader-tip" class="loader-tip"></div>
         </div>
     </div>
 
     <div id="target-hit-msg" aria-live="polite">Target Hit!</div>
+
+    <div id="eyelid-top"></div>
+    <div id="eyelid-bottom"></div>
 
     <div id="death-overlay" style="display:none;">
         <div id="death-content">
@@ -301,9 +356,6 @@
             <tbody id="leaderboard-tbody"></tbody>
         </table>
     </div>
-
-    <!-- SND team badge (below health/stamina) -->
-    <div id="snd-team-badge" style="display:none;">ATTACKER</div>
 
     <!-- SND top-center timer + score -->
     <div id="snd-timer-display" style="display:none;">

@@ -1,6 +1,10 @@
 import * as THREE from "./node_modules/three/build/three.module.js";
 import { GLTFLoader } from './node_modules/three/examples/jsm/loaders/GLTFLoader.js';
 import { EXRLoader } from './node_modules/three/examples/jsm/loaders/EXRLoader.js';
+import { EffectComposer } from './node_modules/three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from './node_modules/three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from './node_modules/three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from './node_modules/three/examples/jsm/postprocessing/OutputPass.js';
 import { initNetwork, broadcastState, broadcastShoot, broadcastPlayerHit, broadcastDeath, broadcastRespawn, broadcastBombPlanted, broadcastBombDefused, broadcastBombPlantingStart, broadcastBombPlantingStop, broadcastSndRematch, broadcastSndQuit, broadcastPistolThrow, broadcastPistolReturn, getMyPlayerId, getRemotePlayerHit, updateRemotePlayers, initRemoteAudio, getLeaderboardData, getRemotePlayerPositions, getRemotePlayerPosition, setRemoteFootstepVolume, setWallBoxes, broadcastGrenadeThrow, getPlayersInRange, broadcastBarrelExploded } from './network.js';
 
 // Asset loading manager
@@ -10,26 +14,119 @@ const loadingManager = new THREE.LoadingManager();
 let loaderOverlay = null;
 let loaderFill = null;
 let loaderPercent = null;
+let loaderStatus = null;
+let loaderTerminal = null;
+let loaderTip = null;
+let _statusInterval = null;
+let _tipInterval = null;
 let dayNightBtn = null;
 let controlsBtn = null;
 let controlsModal = null;
 let infoBtn = null;
 let infoModal = null;
 
+const _STATUS_MSGS = [
+    'POLISHING BULLETS...',
+    'BRIEFING THE BARRELS...',
+    'ARGUING WITH PHYSICS ENGINE...',
+    'TEACHING AI TO MISS ON PURPOSE...',
+    'CALIBRATING EXPLOSION RADIUS...',
+    'LOADING TACTICAL EXPERTISE...',
+    'INSTALLING DRAMATIC DEATH SCREAMS...',
+    'COUNTING PIXELS... (ALL OF THEM)',
+    'HIDING DEVELOPER COFFEE STAINS...',
+    'OPTIMIZING BARREL PLACEMENT...',
+    'COMPILING EXCUSES FOR LAG...',
+    'CONVINCING GRAVITY TO COOPERATE...',
+    'NEGOTIATING WITH THE MAP GEOMETRY...',
+    'SHARPENING HITBOXES...',
+];
+const _TIPS = [
+    'Pro tip: Barrels are not your friends. Or anyone\'s.',
+    'Pro tip: The flashlight makes you easier to spot. But it looks cool.',
+    'Pro tip: One shotgun blast is all a barrel needs.',
+    'Pro tip: Crouching does not make you invisible.',
+    'Pro tip: Explosions chain. Plan accordingly.',
+    'Pro tip: Pistols can be thrown. Results vary.',
+    'Pro tip: Grenades do not care who threw them.',
+    'Pro tip: C4 has a 50-second fuse. Roughly.',
+    'Pro tip: The shotgun has feelings. Treat it well.',
+    'Pro tip: Dead players still block bullets. Use them wisely.',
+    'Pro tip: Night mode exists. So does the flashlight.',
+    'Pro tip: Aim for the head. Or don\'t. It\'s the same damage.',
+];
+const _ASSET_LABELS = {
+    'fps2.glb':               'map geometry & weapons',
+    'muzzle1.png':            'muzzle flash texture',
+    'muzzle2.png':            'muzzle flash texture',
+    'flashlight.mp3':         'flashlight click',
+    'ri1.mp3':                'ricochet sounds',
+    'ri2.mp3':                'ricochet sounds',
+    'indoor_footsteps.mp3':   'footstep audio',
+    '9mm.mp3':                'pistol shot audio',
+    'shotgun-fire.mp3':       'shotgun blast audio',
+    'empty.mp3':              'empty mag click',
+    'mag.mp3':                'reload audio',
+    'shotgun-reload.mp3':     'shotgun reload audio',
+    'death.mp3':              'death sound',
+    'deltarune-explosion.mp3':'explosion audio',
+    'qwant.exr':              'environment lighting',
+};
+
 // LoadingManager callbacks (use DOM variables which will be set once DOM is ready)
-loadingManager.onStart = function (url, itemsLoaded, itemsTotal) {
+loadingManager.onStart = function () {
     if (loaderOverlay) loaderOverlay.classList.remove('hidden');
     if (loaderFill) loaderFill.style.width = '0%';
     if (loaderPercent) loaderPercent.textContent = '0%';
+
+    let sIdx = 0;
+    if (loaderStatus) loaderStatus.textContent = _STATUS_MSGS[0];
+    _statusInterval = setInterval(() => {
+        sIdx = (sIdx + 1) % _STATUS_MSGS.length;
+        if (loaderStatus) loaderStatus.textContent = _STATUS_MSGS[sIdx];
+    }, 2000);
+
+    let tIdx = 0;
+    if (loaderTip) loaderTip.textContent = _TIPS[0];
+    _tipInterval = setInterval(() => {
+        tIdx = (tIdx + 1) % _TIPS.length;
+        if (loaderTip) {
+            loaderTip.style.opacity = '0';
+            setTimeout(() => {
+                if (loaderTip) { loaderTip.textContent = _TIPS[tIdx]; loaderTip.style.opacity = '1'; }
+            }, 300);
+        }
+    }, 3500);
 };
 
 loadingManager.onProgress = function (url, itemsLoaded, itemsTotal) {
     const pct = Math.round((itemsLoaded / itemsTotal) * 100);
     if (loaderFill) loaderFill.style.width = `${pct}%`;
     if (loaderPercent) loaderPercent.textContent = `${pct}%`;
+
+    if (loaderTerminal) {
+        const filename = url.split('/').pop();
+        const label = _ASSET_LABELS[filename]
+            || (url.includes('Grunts') ? 'player pain sounds' : filename);
+        const line = document.createElement('div');
+        line.className = 'loader-line';
+        line.innerHTML = `<span class="lt-arrow">&gt;&gt;&gt;</span> <span class="lt-label">${label}</span><span class="lt-ok"> OK</span>`;
+        loaderTerminal.appendChild(line);
+        loaderTerminal.scrollTop = loaderTerminal.scrollHeight;
+    }
 };
 
 loadingManager.onLoad = function () {
+    clearInterval(_statusInterval);
+    clearInterval(_tipInterval);
+    if (loaderStatus) loaderStatus.textContent = 'ALL SYSTEMS GO.';
+    if (loaderTerminal) {
+        const line = document.createElement('div');
+        line.className = 'loader-line lt-ready';
+        line.innerHTML = `<span class="lt-arrow">&gt;&gt;&gt;</span> <span class="lt-label">FPAT READY.</span>`;
+        loaderTerminal.appendChild(line);
+        loaderTerminal.scrollTop = loaderTerminal.scrollHeight;
+    }
     setTimeout(() => {
         if (loaderOverlay) loaderOverlay.classList.add('hidden');
         gameActive = true;
@@ -39,7 +136,7 @@ loadingManager.onLoad = function () {
             const lobbyEl = document.getElementById('lobby-overlay');
             if (lobbyEl) lobbyEl.classList.add('visible');
         }
-    }, 220);
+    }, 800);
 };
 
 loadingManager.onError = function (url) {
@@ -52,9 +149,12 @@ loadingManager.onError = function (url) {
 
 // Wait for DOM so overlay and UI elements exist
 window.addEventListener('DOMContentLoaded', () => {
-    loaderOverlay = document.getElementById('loading-overlay');
-    loaderFill = document.getElementById('loader-fill');
-    loaderPercent = document.getElementById('loader-percent');
+    loaderOverlay  = document.getElementById('loading-overlay');
+    loaderFill     = document.getElementById('loader-fill');
+    loaderPercent  = document.getElementById('loader-percent');
+    loaderStatus   = document.getElementById('loader-status');
+    loaderTerminal = document.getElementById('loader-terminal');
+    loaderTip      = document.getElementById('loader-tip');
 
     // UI buttons and modals
     dayNightBtn = document.getElementById('day-night-btn');
@@ -106,25 +206,59 @@ window.addEventListener('DOMContentLoaded', () => {
     }
 
     // Volume modal
-    const volumeBtn   = document.getElementById('volume-btn');
-    const volumeModal = document.getElementById('volume-modal');
-    if (volumeBtn && volumeModal) {
-        volumeBtn.addEventListener('click', e => { volumeModal.classList.add('visible'); e.stopPropagation(); });
-        volumeModal.addEventListener('click', () => volumeModal.classList.remove('visible'));
-        const vmContent = document.getElementById('volume-modal-content');
-        if (vmContent) vmContent.addEventListener('click', e => e.stopPropagation());
+    const settingsBtn   = document.getElementById('settings-btn');
+    const settingsModal = document.getElementById('settings-modal');
+    if (settingsBtn && settingsModal) {
+        settingsBtn.addEventListener('click', e => {
+            // Sync day/night button text to current state when modal opens
+            const dnBtn = document.getElementById('setting-daynightbtn');
+            if (dnBtn) dnBtn.textContent = isDay ? 'Day' : 'Night';
+            settingsModal.classList.add('visible');
+            e.stopPropagation();
+        });
+        settingsModal.addEventListener('click', () => settingsModal.classList.remove('visible'));
+        const smContent = document.getElementById('settings-modal-content');
+        if (smContent) smContent.addEventListener('click', e => e.stopPropagation());
 
-        const gunshotSlider  = document.getElementById('vol-gunshot');
-        const gunshotValEl   = document.getElementById('vol-gunshot-val');
-        const footstepSlider = document.getElementById('vol-footstep');
-        const footstepValEl  = document.getElementById('vol-footstep-val');
+        // --- Graphics ---
+        const bloomToggle = document.getElementById('setting-bloom');
+        if (bloomToggle) {
+            bloomToggle.addEventListener('change', () => {
+                bloomPass.enabled = bloomToggle.checked;
+            });
+        }
+
+        const fovSlider = document.getElementById('setting-fov');
+        const fovVal    = document.getElementById('setting-fov-val');
+        if (fovSlider) {
+            fovSlider.addEventListener('input', () => {
+                camera.fov = parseFloat(fovSlider.value);
+                camera.updateProjectionMatrix();
+                if (fovVal) fovVal.textContent = fovSlider.value;
+            });
+        }
+
+        const dnBtn = document.getElementById('setting-daynightbtn');
+        if (dnBtn) {
+            dnBtn.addEventListener('click', e => {
+                e.stopPropagation();
+                updateDayNightButton();
+                dnBtn.textContent = isDay ? 'Day' : 'Night';
+            });
+        }
+
+        // --- Audio ---
+        const gunshotSlider   = document.getElementById('vol-gunshot');
+        const gunshotValEl    = document.getElementById('vol-gunshot-val');
+        const footstepSlider  = document.getElementById('vol-footstep');
+        const footstepValEl   = document.getElementById('vol-footstep-val');
         const explosionSlider = document.getElementById('vol-explosion');
         const explosionValEl  = document.getElementById('vol-explosion-val');
 
         if (gunshotSlider) {
             gunshotSlider.addEventListener('input', () => {
                 const s = parseFloat(gunshotSlider.value);
-                gunVolume = s * s; // squared curve — makes slider perceptually linear
+                gunVolume = s * s;
                 if (gunshotValEl) gunshotValEl.textContent = Math.round(s * 100) + '%';
                 gunshotSound.setVolume(gunVolume);
             });
@@ -132,7 +266,7 @@ window.addEventListener('DOMContentLoaded', () => {
         if (footstepSlider) {
             footstepSlider.addEventListener('input', () => {
                 const s = parseFloat(footstepSlider.value);
-                footstepVolume = s * s; // squared curve
+                footstepVolume = s * s;
                 if (footstepValEl) footstepValEl.textContent = Math.round(s * 100) + '%';
                 footstepSound.setVolume(footstepVolume);
                 setRemoteFootstepVolume(footstepVolume);
@@ -142,6 +276,31 @@ window.addEventListener('DOMContentLoaded', () => {
             explosionSlider.addEventListener('input', () => {
                 explosionVolume = parseFloat(explosionSlider.value);
                 if (explosionValEl) explosionValEl.textContent = Math.round(explosionVolume * 100) + '%';
+            });
+        }
+
+        // --- Controls ---
+        const sensSlider = document.getElementById('setting-sensitivity');
+        const sensVal    = document.getElementById('setting-sensitivity-val');
+        if (sensSlider) {
+            sensSlider.addEventListener('input', () => {
+                controls.sensitivity = parseFloat(sensSlider.value) * 0.0005;
+                if (sensVal) sensVal.textContent = sensSlider.value;
+            });
+        }
+
+        const invertYToggle = document.getElementById('setting-inverty');
+        if (invertYToggle) {
+            invertYToggle.addEventListener('change', () => { invertY = invertYToggle.checked; });
+        }
+
+        const crouchHoldToggle = document.getElementById('setting-crouchhold');
+        const crouchModeLabel  = document.getElementById('setting-crouchmode-label');
+        if (crouchHoldToggle) {
+            crouchHoldToggle.addEventListener('change', () => {
+                crouchHoldMode = crouchHoldToggle.checked;
+                if (crouchModeLabel) crouchModeLabel.textContent = crouchHoldMode ? 'Hold' : 'Toggle';
+                if (!crouchHoldMode && isCrouching) { isCrouching = false; } // stand up if switching away from hold while crouched
             });
         }
     }
@@ -219,7 +378,7 @@ class FPSControls {
             const dx = Math.max(-50, Math.min(50, e.movementX || 0));
             const dy = Math.max(-50, Math.min(50, e.movementY || 0));
             this._yaw   -= dx * this.sensitivity;
-            this._pitch -= dy * this.sensitivity;
+            this._pitch -= dy * this.sensitivity * (invertY ? -1 : 1);
             this._pitch  = Math.max(-Math.PI * 0.499, Math.min(Math.PI * 0.499, this._pitch));
         };
         // getCoalescedEvents gives sub-frame events on high-frequency mice (1000 Hz etc.)
@@ -264,6 +423,8 @@ class FPSControls {
 // Renderer
 const renderer = new THREE.WebGLRenderer();
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
 document.body.appendChild(renderer.domElement);
 
 // Scene and camera
@@ -271,14 +432,35 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 window.camera = camera;
 
+// Post-processing: bloom (must be after scene and camera are declared)
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight),
+    0.15,  // strength
+    0.6,   // radius
+    0.85   // threshold — only pixels brighter than this bloom (emissives, flashes)
+);
+composer.addPass(bloomPass);
+composer.addPass(new OutputPass());
+bloomPass.enabled = false; // off by default; toggled via Settings → Graphics
+
+window.addEventListener('resize', () => {
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+});
+
 // Controls
 const controls = new FPSControls(camera, renderer.domElement);
 const controlsObject = camera; // alias — existing code uses controlsObject for position/collision
 scene.add(camera);
 
 // Lighting
-const sun = new THREE.DirectionalLight(0xffffff, 0.4); // softer intensity
+const sun = new THREE.DirectionalLight(0xfff5e0, 1.5);
 sun.position.set(10, 20, 10);
+sun.castShadow = true;
 
 // Shadow settings
 sun.shadow.mapSize.width = 2048;
@@ -289,13 +471,15 @@ sun.shadow.camera.left = -50;
 sun.shadow.camera.right = 50;
 sun.shadow.camera.top = 50;
 sun.shadow.camera.bottom = -50;
+sun.shadow.bias = -0.001;
+sun.shadow.normalBias = 0.02;
 
 scene.add(sun);
 
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-const ambient = new THREE.AmbientLight(0xffffff, 0.2);
+const ambient = new THREE.AmbientLight(0xc8d8ff, 0.06);
 scene.add(ambient);
 
 // Flashlight setup
@@ -305,6 +489,7 @@ flashlight.position.set(0, 0, 0);
 flashlight.target.position.set(0, 0, -1);
 camera.add(flashlight.target);
 flashlight.visible = false;
+flashlight.intensity = 0;
 
 // WASD movement
 const move = { forward: false, backward: false, left: false, right: false };
@@ -320,6 +505,8 @@ const reloadAnimSpeed = 2;
 let canJump = true;
 let isWalking = false;
 let isCrouching = false;
+let invertY = false;
+let crouchHoldMode = false;
 let activeWeapon = 'pistol'; // 'pistol' | 'shotgun'
 let weaponSwitchState = 'idle'; // 'idle' | 'holstering' | 'drawing'
 let weaponSwitchProgress = 0;
@@ -396,6 +583,11 @@ let isPlanting      = false;
 let isDefusing      = false;
 let plantTimer      = 0;
 let defuseTimer     = 0;
+let plantAutocrouched = false;
+let plantSitePos    = null;
+let ghostBombMesh   = null;
+let ghostBombBarGroup = null;
+let ghostBombBarFill  = null;
 let _sndRoundStartTimeout = null;
 let _sndRoundEndTimeout   = null;
 let _bombBeepTimeout      = null;
@@ -432,12 +624,18 @@ let explosionVolume = 1.0;
 let health = 100;
 let healthDepleteTimer = 0;
 let isDead = false;
+let deathRagdoll = null; // { velY, rotZ, velRotZ, grounded }
 let lastHitBy = null;
 let lastHitWasMelee = false;
 let shakeIntensity = 0;
 let shakeAngle = 0;
 let isDay = true;
+let nightTransition = null;    // { delayLeft, fadeTimer, fadeDuration } — null when inactive
+let dayNightTransition    = null; // { toNight, progress, duration, startSun, startAmbient } — null when inactive
+let flashlightTransition  = null; // { targetOn, progress, duration, startIntensity } — null when inactive
 let exrTexture = null;
+const tubelightEmitters = []; // { mat, origEmissive, origEmissiveIntensity }
+const tubeLights = [];        // PointLights placed at PL empties, enabled at night
 let wallBoxes = [];
 let mapScene = null;
 let c4Template = null;
@@ -446,6 +644,8 @@ let c4Template = null;
 let targetObjects = [];
 const raycaster = new THREE.Raycaster();
 const _barrelOccRaycaster = new THREE.Raycaster();
+const _ghostBombRaycaster = new THREE.Raycaster();
+_ghostBombRaycaster.far = 4.5;
 const _barrelOccCamPos    = new THREE.Vector3();
 let targetHitTimeout = null;
 
@@ -464,8 +664,12 @@ function onKeyDown(event) {
             shiftPressed = true;
             break;
         case 'KeyC':
-            isCrouching = !isCrouching;
-            playRandomCrouch();
+            if (crouchHoldMode) {
+                if (!isCrouching) { isCrouching = true; playRandomCrouch(); }
+            } else {
+                isCrouching = !isCrouching;
+                playRandomCrouch();
+            }
             break;
         case 'KeyN':
             updateDayNightButton();
@@ -488,16 +692,19 @@ function onKeyDown(event) {
                     isPlanting = true;
                     broadcastBombPlantingStart(camera.position);
                     startPlantingSound(camera.position);
+                    if (!isCrouching) { isCrouching = true; plantAutocrouched = true; playRandomCrouch(); }
                 }
                 if (sndPhase === 'planted' && myTeam === 'defender' && isNearBomb() && !isPlanting) isDefusing = true;
             }
             break;
-        case 'KeyF':
+        case 'KeyF': {
             toggleFlashlightSound();
-            flashlight.visible = !flashlight.visible;
-            flashlight.intensity = flashlight.visible ? 10 : 0;
-            document.getElementById('flashlight-indicator')?.classList.toggle('active', flashlight.visible);
+            const flTargetOn = flashlightTransition ? !flashlightTransition.targetOn : !flashlight.visible;
+            if (flTargetOn) flashlight.visible = true;
+            document.getElementById('flashlight-indicator')?.classList.toggle('active', flTargetOn);
+            flashlightTransition = { targetOn: flTargetOn, progress: 0, duration: 0.5, startIntensity: flashlight.intensity };
             break;
+        }
         case 'KeyR':
             if (activeWeapon === 'shotgun') {
                 if (shotgunAmmoCurrent < shotgunAmmoMax && shotgunAmmoReserve > 0 && !isReloading) {
@@ -558,11 +765,16 @@ function onKeyUp(event) {
             isWalking = false;
             shiftPressed = false;
             break;
+        case 'KeyC':
+            if (crouchHoldMode && isCrouching) { isCrouching = false; playRandomCrouch(); }
+            break;
         case 'KeyE':
             if (isPlanting || isDefusing) {
                 if (isPlanting) {
                     broadcastBombPlantingStop();
                     stopPlantingSound();
+                    if (plantAutocrouched) { isCrouching = false; plantAutocrouched = false; playRandomCrouch(); }
+                    if (ghostBombBarGroup) ghostBombBarGroup.visible = false;
                 }
                 isPlanting = false;
                 isDefusing = false;
@@ -595,6 +807,35 @@ loader.load('fps2.glb', (gltf) => {
         c4Template.traverse(child => {
             if (child.isMesh && child.material) child.material = child.material.clone();
         });
+
+        // Ghost bomb preview (semi-transparent, shown in plant site)
+        ghostBombMesh = c4Template.clone();
+        ghostBombMesh.traverse(child => {
+            if (child.isMesh && child.material) {
+                child.material = child.material.clone();
+                child.material.transparent = true;
+                child.material.opacity = 0.35;
+                child.material.emissive = new THREE.Color(0x4488ff);
+                child.material.emissiveIntensity = 0.4;
+                child.material.depthWrite = false;
+            }
+        });
+        ghostBombMesh.visible = false;
+        scene.add(ghostBombMesh);
+
+        // Floating progress bar (billboards toward camera)
+        ghostBombBarGroup = new THREE.Group();
+        const gbBarBgGeo  = new THREE.PlaneGeometry(0.4, 0.04);
+        const gbBarBgMat  = new THREE.MeshBasicMaterial({ color: 0x111111, transparent: true, opacity: 0.8, depthWrite: false });
+        ghostBombBarGroup.add(new THREE.Mesh(gbBarBgGeo, gbBarBgMat));
+        const gbBarFillGeo = new THREE.PlaneGeometry(0.4, 0.04);
+        const gbBarFillMat = new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.95, depthWrite: false });
+        ghostBombBarFill = new THREE.Mesh(gbBarFillGeo, gbBarFillMat);
+        ghostBombBarFill.position.set(-0.2, 0, 0.002);
+        ghostBombBarFill.scale.x = 0.001;
+        ghostBombBarGroup.add(ghostBombBarFill);
+        ghostBombBarGroup.visible = false;
+        scene.add(ghostBombBarGroup);
     }
 
     scene.add(gltf.scene);
@@ -602,7 +843,7 @@ loader.load('fps2.glb', (gltf) => {
 
     gltf.scene.traverse((child) => {
         if (child.isMesh && child.material && 'envMapIntensity' in child.material) {
-            child.material.envMapIntensity = 0.5; // Adjust as needed
+            child.material.envMapIntensity = 1.0;
             child.castShadow = true;
             child.receiveShadow = true;
         }
@@ -618,6 +859,20 @@ loader.load('fps2.glb', (gltf) => {
             }
         }
     }
+    // Crate colliders — one box per leaf mesh so Crate1 (parent node) doesn't
+    // produce a giant AABB that swallows all of its children
+    const crateParent = gltf.scene.getObjectByName('Crate1');
+    if (crateParent) {
+        crateParent.traverse(obj => {
+            if (!obj.isMesh || obj.children.some(c => c.isMesh)) return;
+            wallBoxes.push(new THREE.Box3().setFromObject(obj));
+        });
+    }
+
+    // MContainer collider
+    const mContainer = gltf.scene.getObjectByName('MContainer');
+    if (mContainer) wallBoxes.push(new THREE.Box3().setFromObject(mContainer));
+
     setWallBoxes(wallBoxes);
 
     targetObjects = [];
@@ -642,6 +897,42 @@ loader.load('fps2.glb', (gltf) => {
         barrels.push({ mesh: b, hp: BARREL_HP, exploded: false, worldPos: wp });
     }
 
+    // Collect TLL (tube light emitter) objects for day/night toggle
+    {
+        const tllNames = ['TLL', ...Array.from({ length: 68 }, (_, i) => `TLL.${String(i + 1).padStart(3, '0')}`)];
+        const seenMats = new Set();
+        tllNames.forEach(tllName => {
+            const tllObj = gltf.scene.getObjectByName(tllName);
+            if (!tllObj) return;
+            tllObj.traverse(child => {
+                if (!child.isMesh || !child.material) return;
+                const mats = Array.isArray(child.material) ? child.material : [child.material];
+                mats.forEach(mat => {
+                    if (seenMats.has(mat.uuid)) return;
+                    seenMats.add(mat.uuid);
+                    tubelightEmitters.push({
+                        mat,
+                        origEmissive: mat.emissive ? mat.emissive.clone() : new THREE.Color(0),
+                        origEmissiveIntensity: mat.emissiveIntensity || 0,
+                    });
+                });
+            });
+        });
+
+        // Create a PointLight at each PL empty (PL1–PL67, off by default, enabled at night)
+        const plPattern = /^PL\d+$/;
+        gltf.scene.traverse(obj => {
+            if (!plPattern.test(obj.name)) return;
+            const plPos = new THREE.Vector3();
+            obj.getWorldPosition(plPos);
+            const pl = new THREE.PointLight(0xfff0cc, 12, 28, 2);
+            pl.position.copy(plPos);
+            pl.visible = false;
+            scene.add(pl);
+            tubeLights.push(pl);
+        });
+    }
+
     let pistol = gltf.scene.getObjectByName('Pistol');
     if (pistol) {
         // Remove pistol from scene if it's already added
@@ -654,12 +945,34 @@ loader.load('fps2.glb', (gltf) => {
         pistol.position.set(0.4, -0.3, -0.8); // Adjust X, Y, Z for desired placement
         pistol.rotation.set(0, -Math.PI / 2, 0); // Adjust for correct orientation
 
-        const pistolFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: muzzleTextures[0], transparent: true }));
+        // Outer fire-glow — orange-tinted, additive blending
+        const pistolFireGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: muzzleTextures[0], transparent: true,
+            blending: THREE.AdditiveBlending, depthWrite: false,
+            color: new THREE.Color(1.0, 0.35, 0.05),
+        }));
+        pistolFireGlow.name = 'PistolFireGlow';
+        pistolFireGlow.scale.set(0.38, 0.38, 0.38);
+        pistolFireGlow.position.set(-0.15, 0.04, 0.05);
+        pistolFireGlow.visible = false;
+        pistol.add(pistolFireGlow);
+
+        // Central bright flash — additive
+        const pistolFlash = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: muzzleTextures[0], transparent: true,
+            blending: THREE.AdditiveBlending, depthWrite: false,
+        }));
         pistolFlash.name = 'PistolMuzzleFlash';
-        pistolFlash.scale.set(0.15, 0.15, 0.15);
+        pistolFlash.scale.set(0.18, 0.18, 0.18);
         pistolFlash.position.set(-0.15, 0.04, 0.05);
         pistolFlash.visible = false;
         pistol.add(pistolFlash);
+
+        // Muzzle point light — always present at 0 intensity
+        const pMuzzleLight = new THREE.PointLight(0xffaa33, 0, 7, 2);
+        pMuzzleLight.name = 'PistolMuzzleLight';
+        pMuzzleLight.position.set(-0.15, 0.04, 0.05);
+        pistol.add(pMuzzleLight);
 
     } else {
         console.warn('Pistol not found in GLB.');
@@ -674,12 +987,34 @@ loader.load('fps2.glb', (gltf) => {
         shotgunObj.scale.set(0.5, 0.5, 0.5);
         shotgunObj.visible = false;
 
-        const shotgunFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: muzzleTextures[0], transparent: true }));
+        // Outer fire-glow — larger, orange-tinted, additive so it layers over the scene
+        const shotgunFireGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: muzzleTextures[0], transparent: true,
+            blending: THREE.AdditiveBlending, depthWrite: false,
+            color: new THREE.Color(1.0, 0.35, 0.05),
+        }));
+        shotgunFireGlow.name = 'ShotgunFireGlow';
+        shotgunFireGlow.scale.set(1.1, 1.1, 1.1);
+        shotgunFireGlow.position.set(0, 0.08, 1.55);
+        shotgunFireGlow.visible = false;
+        shotgunObj.add(shotgunFireGlow);
+
+        // Central bright flash — additive so it blooms over the glow
+        const shotgunFlash = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: muzzleTextures[0], transparent: true,
+            blending: THREE.AdditiveBlending, depthWrite: false,
+        }));
         shotgunFlash.name = 'ShotgunMuzzleFlash';
-        shotgunFlash.scale.set(0.5, 0.5, 0.5);
+        shotgunFlash.scale.set(0.55, 0.55, 0.55);
         shotgunFlash.position.set(0, 0.08, 1.55);
         shotgunFlash.visible = false;
         shotgunObj.add(shotgunFlash);
+
+        // Muzzle point light — always present at 0 intensity to avoid shader recompiles
+        const sgMuzzleLight = new THREE.PointLight(0xffaa33, 0, 10, 2);
+        sgMuzzleLight.name = 'ShotgunMuzzleLight';
+        sgMuzzleLight.position.set(0, 0.08, 1.55);
+        shotgunObj.add(sgMuzzleLight);
     } else {
         console.warn('Shotgun not found in GLB.');
     }
@@ -721,6 +1056,12 @@ const flashlightSound = new THREE.Audio(listener);
 audioLoader.load('flashlight.mp3', (buffer) => {
     flashlightSound.setBuffer(buffer);
     flashlightSound.setVolume(0.5);
+});
+
+const lightsOnSound = new THREE.Audio(listener);
+audioLoader.load('lights-on.mp3', (buffer) => {
+    lightsOnSound.setBuffer(buffer);
+    lightsOnSound.setVolume(1.0);
 });
 
 // --- Impact audio buffers (ricochet) ---
@@ -890,21 +1231,51 @@ function shootHandler(event) {
                 shotgunRecoil = maxShotgunRecoil;
                 shotgunAmmoCurrent--;
                 const sgFlash = camera.getObjectByName('ShotgunMuzzleFlash');
+                const sgGlow  = camera.getObjectByName('ShotgunFireGlow');
+                const sgLight = camera.getObjectByName('ShotgunMuzzleLight');
+                const flashTex = muzzleTextures[Math.floor(Math.random() * muzzleTextures.length)];
+                const flashRot = Math.random() * Math.PI * 2;
                 if (sgFlash) {
-                    sgFlash.material.map = muzzleTextures[Math.floor(Math.random() * muzzleTextures.length)];
+                    sgFlash.material.map = flashTex;
+                    sgFlash.material.rotation = flashRot;
+                    const fs = 0.45 + Math.random() * 0.2;
+                    sgFlash.scale.set(fs, fs, fs);
                     sgFlash.visible = true;
                 }
+                if (sgGlow) {
+                    sgGlow.material.map = flashTex;
+                    sgGlow.material.rotation = flashRot + 0.3;
+                    const gs = 0.9 + Math.random() * 0.4;
+                    sgGlow.scale.set(gs, gs, gs);
+                    sgGlow.visible = true;
+                }
+                if (sgLight) sgLight.intensity = 14;
             } else {
                 fireCooldown = FIRE_RATE;
                 gunshotSound.stop();
                 gunshotSound.play();
                 recoil = maxRecoil;
                 ammoCurrent--;
-                const pFlash = camera.getObjectByName('PistolMuzzleFlash');
+                const pFlash  = camera.getObjectByName('PistolMuzzleFlash');
+                const pGlow   = camera.getObjectByName('PistolFireGlow');
+                const pLight  = camera.getObjectByName('PistolMuzzleLight');
+                const pTex    = muzzleTextures[Math.floor(Math.random() * muzzleTextures.length)];
+                const pRot    = Math.random() * Math.PI * 2;
                 if (pFlash) {
-                    pFlash.material.map = muzzleTextures[Math.floor(Math.random() * muzzleTextures.length)];
+                    pFlash.material.map = pTex;
+                    pFlash.material.rotation = pRot;
+                    const fs = 0.08 + Math.random() * 0.04;
+                    pFlash.scale.set(fs, fs, fs);
                     pFlash.visible = true;
                 }
+                if (pGlow) {
+                    pGlow.material.map = pTex;
+                    pGlow.material.rotation = pRot + 0.3;
+                    const gs = 0.16 + Math.random() * 0.07;
+                    pGlow.scale.set(gs, gs, gs);
+                    pGlow.visible = true;
+                }
+                if (pLight) pLight.intensity = 7;
             }
             muzzleFlashTimer = 0.08;
             updateAmmoDisplay();
@@ -1178,29 +1549,39 @@ exrLoader.load('qwant.exr', (texture) => {
 // Day-Night toggle function (uses dayNightBtn if available)
 function updateDayNightButton() {
     isDay = !isDay;
+
+    // Update button icons and settings label immediately
+    if (dayNightBtn?.querySelector) {
+        const img = dayNightBtn.querySelector('img');
+        if (img) img.src = isDay ? 'night.png' : 'day.png';
+    }
+    const sdnBtn = document.getElementById('setting-daynightbtn');
+    if (sdnBtn) sdnBtn.textContent = isDay ? 'Day' : 'Night';
+
     if (isDay) {
-        sun.visible = true;
-        sun.intensity = 0.4;
-        ambient.intensity = 0.2;
-        scene.background = null;
-        // Enable HDR if loaded
-        if (exrTexture) {
-            const envMap = pmremGenerator.fromEquirectangular(exrTexture).texture;
-            scene.environment = envMap;
-        }
-        if (dayNightBtn && dayNightBtn.querySelector) {
-            const img = dayNightBtn.querySelector('img');
-            if (img) img.src = 'night.png';
-        }
+        // Night → Day:
+        // Phase 1 (1 s): tube lights + PLs fade out
+        // Phase 2 (1 s): sun + EXR fade in
+        nightTransition = null;
+        dayNightTransition = {
+            toNight: false, phase: 1,
+            progress: 0, duration: 2.0, delayLeft: 0,
+            startTubeIntensity: tubelightEmitters[0]?.mat.emissiveIntensity ?? 0,
+            startPLIntensity:   tubeLights[0]?.intensity ?? 0,
+        };
     } else {
-        sun.visible = false;
-        ambient.intensity = 0.18;
-        scene.background = new THREE.Color(0x10131a);
-        scene.environment = null;
-        if (dayNightBtn && dayNightBtn.querySelector) {
-            const img = dayNightBtn.querySelector('img');
-            if (img) img.src = 'day.png';
-        }
+        // Day → Night:
+        // Phase 1 (1 s): sun + EXR fade out
+        // then nightTransition (1 s): tube lights + PLs fade in
+        tubelightEmitters.forEach(({ mat }) => { mat.emissive.set(0xfff0cc); mat.emissiveIntensity = 0; });
+        tubeLights.forEach(pl => { pl.visible = true; pl.intensity = 0; });
+        dayNightTransition = {
+            toNight: true, phase: 1,
+            progress: 0, duration: 1.0, delayLeft: 0,
+            startSun:     sun.intensity,
+            startAmbient: ambient.intensity,
+            startEnv:     scene.environmentIntensity ?? 1,
+        };
     }
 }
 
@@ -1517,7 +1898,12 @@ function spawnGrenadeFlash(pos) {
     const sphere = new THREE.Mesh(geo, mat);
     sphere.position.copy(pos);
     scene.add(sphere);
-    grenadeFlashes.push({ sphere, geo, mat, t: 0 });
+
+    const light = new THREE.PointLight(0xff6600, 40, 22, 1.5);
+    light.position.copy(pos);
+    scene.add(light);
+
+    grenadeFlashes.push({ sphere, geo, mat, light, peakIntensity: 40, t: 0 });
 }
 
 function spawnGrenadeObject(pos, vel) {
@@ -1563,6 +1949,18 @@ function grenadeExplode(g, idx) {
             triggerShake(selfDmg * 0.0018);
             if (health <= 0) triggerDeath();
         }
+
+        // Barrel chain — grenade blasts trigger nearby barrels
+        const chainTargets = [];
+        barrels.forEach((barrel, barrelIdx) => {
+            if (barrel.exploded) return;
+            const d = pos.distanceTo(barrel.worldPos);
+            if (d <= BARREL_CHAIN_RADIUS) chainTargets.push({ barrelIdx, d });
+        });
+        chainTargets.sort((a, b) => a.d - b.d);
+        chainTargets.forEach(({ barrelIdx }, i) => {
+            setTimeout(() => explodeBarrel(barrelIdx, true), 1000 * (i + 1));
+        });
     }
 }
 
@@ -1580,7 +1978,12 @@ function spawnBarrelExplosion(pos) {
     const sphere = new THREE.Mesh(geo, mat);
     sphere.position.copy(pos);
     scene.add(sphere);
-    grenadeFlashes.push({ sphere, geo, mat, t: 0 });
+
+    const light = new THREE.PointLight(0xff5500, 65, 30, 1.5);
+    light.position.copy(pos);
+    scene.add(light);
+
+    grenadeFlashes.push({ sphere, geo, mat, light, peakIntensity: 65, t: 0 });
 }
 
 function greyOutBarrel(barrel) {
@@ -1665,11 +2068,15 @@ function explodeBarrel(idx, isLocal) {
             }
         }
 
+        const chainTargets = [];
         barrels.forEach((other, otherIdx) => {
             if (otherIdx === idx || other.exploded) return;
-            if (pos.distanceTo(other.worldPos) <= BARREL_CHAIN_RADIUS) {
-                setTimeout(() => explodeBarrel(otherIdx, true), 350 + Math.random() * 200);
-            }
+            const d = pos.distanceTo(other.worldPos);
+            if (d <= BARREL_CHAIN_RADIUS) chainTargets.push({ otherIdx, d });
+        });
+        chainTargets.sort((a, b) => a.d - b.d);
+        chainTargets.forEach(({ otherIdx }, i) => {
+            setTimeout(() => explodeBarrel(otherIdx, true), 1000 * (i + 1));
         });
     }
 }
@@ -1870,6 +2277,8 @@ document.addEventListener('my-kill', () => {
 // Death and respawn
 function triggerDeath() {
     isDead = true;
+    const rollDir = Math.random() < 0.5 ? 1 : -1;
+    deathRagdoll = { velY: 0, rotZ: 0, velRotZ: rollDir * (4 + Math.random() * 3), grounded: false };
     health = 0;
     killStreak = 0;
     setHealthBar(0);
@@ -1884,7 +2293,10 @@ function triggerDeath() {
     isDefusing = false;
     plantTimer = 0;
     defuseTimer = 0;
+    plantAutocrouched = false;
     updateSndProgressBar(false, 0, 0);
+    if (ghostBombMesh) ghostBombMesh.visible = false;
+    if (ghostBombBarGroup) ghostBombBarGroup.visible = false;
 
     if (thrownPistol) {
         scene.remove(thrownPistol.mesh);
@@ -1930,6 +2342,16 @@ function respawn() {
     shotgunAmmoReserve = shotgunAmmoTotal - shotgunAmmoMax;
     velocity.set(0, 0, 0);
     controlsObject.position.copy(pickSpawnPoint());
+    deathRagdoll = null;
+    camera.rotation.z = 0;
+    const eyelidTop = document.getElementById('eyelid-top');
+    const eyelidBot = document.getElementById('eyelid-bottom');
+    if (eyelidTop) { eyelidTop.style.transition = 'height 0.5s ease-out'; eyelidTop.style.height = '0'; }
+    if (eyelidBot) { eyelidBot.style.transition = 'height 0.5s ease-out'; eyelidBot.style.height = '0'; }
+    setTimeout(() => {
+        if (eyelidTop) eyelidTop.style.transition = '';
+        if (eyelidBot) eyelidBot.style.transition = '';
+    }, 500);
     controls.setRotation(controls._yaw, 0); // keep current yaw, reset pitch to level
     isCrouching = false;
     cancelShotgunReload();
@@ -2003,7 +2425,7 @@ function isNearBomb() {
 
 function spawnPlantedBomb(position) {
     removePlantedBomb(); // clean up any previous instance first
-    const floorY = Math.max(0.18, position.y - 1.9);
+    const floorY = Math.max(0.18, position.y);
 
     if (c4Template) {
         bombMesh = c4Template.clone();
@@ -2373,6 +2795,98 @@ function animate() {
     // Cap delta to prevent huge position jumps when the tab was in the background
     const delta = Math.min(clock.getDelta(), 0.05);
 
+    // Day/night sequential two-phase crossfade
+    if (dayNightTransition) {
+        // Burn through any idle gap before this phase's progress starts
+        if (dayNightTransition.delayLeft > 0) {
+            dayNightTransition.delayLeft -= delta;
+        } else {
+            dayNightTransition.progress = Math.min(1, dayNightTransition.progress + delta / dayNightTransition.duration);
+            const t = dayNightTransition.progress;
+
+            if (dayNightTransition.toNight) {
+                // ── Day → Night, Phase 1 (1 s): fade sun + EXR out ──
+                sun.intensity              = dayNightTransition.startSun     * (1 - t);
+                ambient.intensity          = dayNightTransition.startAmbient + (0.05 - dayNightTransition.startAmbient) * t;
+                scene.environmentIntensity = dayNightTransition.startEnv     * (1 - t);
+                if (t >= 1) {
+                    sun.visible = false;
+                    scene.background = new THREE.Color(0x10131a);
+                    scene.environment = null;
+                    scene.environmentIntensity = 1;
+                    // 1 s idle, then tube lights + PLs fade in over 2 s
+                    nightTransition = { delayLeft: 1.0, fadeTimer: 0, fadeDuration: 2.0 };
+                    dayNightTransition = null;
+                }
+
+            } else if (dayNightTransition.phase === 1) {
+                // ── Night → Day, Phase 1 (2 s): fade tube lights + PLs out ──
+                tubelightEmitters.forEach(({ mat }) => { mat.emissiveIntensity = dayNightTransition.startTubeIntensity * (1 - t); });
+                tubeLights.forEach(pl => { pl.intensity = dayNightTransition.startPLIntensity * (1 - t); });
+                if (t >= 1) {
+                    tubelightEmitters.forEach(({ mat }) => { mat.emissiveIntensity = 0; });
+                    tubeLights.forEach(pl => { pl.intensity = 0; });
+                    // Restore EXR at intensity 0 so phase 2 can fade it in
+                    sun.visible = true;
+                    scene.environmentIntensity = 0;
+                    if (exrTexture) {
+                        scene.environment = pmremGenerator.fromEquirectangular(exrTexture).texture;
+                    }
+                    // 1 s idle, then sun + EXR fade in over 1 s
+                    dayNightTransition = {
+                        toNight: false, phase: 2,
+                        progress: 0, duration: 1.0, delayLeft: 1.0,
+                        startAmbient: ambient.intensity,
+                    };
+                }
+
+            } else {
+                // ── Night → Day, Phase 2 (1 s): fade sun + EXR in ──
+                sun.intensity              = 1.5 * t;
+                ambient.intensity          = dayNightTransition.startAmbient + (0.06 - dayNightTransition.startAmbient) * t;
+                scene.environmentIntensity = t;
+                if (t >= 1) {
+                    scene.background = null;
+                    tubelightEmitters.forEach(({ mat, origEmissive, origEmissiveIntensity }) => {
+                        mat.emissive.copy(origEmissive);
+                        mat.emissiveIntensity = origEmissiveIntensity;
+                    });
+                    tubeLights.forEach(pl => { pl.intensity = 0; pl.visible = false; });
+                    dayNightTransition = null;
+                }
+            }
+        }
+    }
+
+    // Night-mode fade-in (delay → 2 s intensity ramp)
+    if (nightTransition) {
+        if (nightTransition.delayLeft > 0) {
+            nightTransition.delayLeft -= delta;
+            if (nightTransition.delayLeft <= 0 && lightsOnSound.buffer) {
+                if (lightsOnSound.isPlaying) lightsOnSound.stop();
+                lightsOnSound.play();
+            }
+        } else {
+            nightTransition.fadeTimer = Math.min(nightTransition.fadeTimer + delta, nightTransition.fadeDuration);
+            const t = nightTransition.fadeTimer / nightTransition.fadeDuration;
+            tubelightEmitters.forEach(({ mat }) => { mat.emissiveIntensity = t * 2.5; });
+            tubeLights.forEach(pl => { pl.intensity = t * 12; });
+            if (nightTransition.fadeTimer >= nightTransition.fadeDuration) nightTransition = null;
+        }
+    }
+
+    // Flashlight 0.5 s fade in/out
+    if (flashlightTransition) {
+        flashlightTransition.progress = Math.min(1, flashlightTransition.progress + delta / flashlightTransition.duration);
+        const t = flashlightTransition.progress;
+        const target = flashlightTransition.targetOn ? 10 : 0;
+        flashlight.intensity = flashlightTransition.startIntensity + (target - flashlightTransition.startIntensity) * t;
+        if (t >= 1) {
+            if (!flashlightTransition.targetOn) flashlight.visible = false;
+            flashlightTransition = null;
+        }
+    }
+
     // Weapon switch animation
     if (weaponSwitchState !== 'idle') {
         weaponSwitchProgress = Math.min(1, weaponSwitchProgress + WEAPON_SWITCH_SPEED * delta);
@@ -2401,12 +2915,43 @@ function animate() {
             if (move.backward) camera.position.addScaledVector(camDir,  -spectateSpeed * delta);
             if (move.right)    camera.position.addScaledVector(camRight,  spectateSpeed * delta);
             if (move.left)     camera.position.addScaledVector(camRight, -spectateSpeed * delta);
-        } else {
-            controlsObject.position.y += (0.3 - controlsObject.position.y) * 5 * delta;
+        } else if (deathRagdoll) {
+            if (!deathRagdoll.grounded) {
+                // Gravity-driven fall
+                deathRagdoll.velY -= 28 * delta;
+                controlsObject.position.y += deathRagdoll.velY * delta;
+                // Angular velocity tumble — spin decays as body falls
+                deathRagdoll.velRotZ *= Math.exp(-1.5 * delta);
+                deathRagdoll.rotZ += deathRagdoll.velRotZ * delta;
+                camera.rotation.z = deathRagdoll.rotZ;
+                // Ground impact
+                if (controlsObject.position.y <= 0.3) {
+                    controlsObject.position.y = 0.3;
+                    deathRagdoll.velY = -deathRagdoll.velY * 0.15; // small bounce
+                    deathRagdoll.velRotZ *= 0.2; // abrupt spin-kill on impact
+                    deathRagdoll.grounded = true;
+                }
+            } else {
+                // Settle toward floor (absorb bounce) and ease to resting tilt
+                if (controlsObject.position.y > 0.3) {
+                    deathRagdoll.velY -= 28 * delta;
+                    controlsObject.position.y = Math.max(0.3, controlsObject.position.y + deathRagdoll.velY * delta);
+                }
+                const targetRoll = Math.sign(deathRagdoll.rotZ || 1) * 1.3;
+                camera.rotation.z += (targetRoll - camera.rotation.z) * 2.5 * delta;
+            }
+            // Eyelid close — easeInCubic so lids droop slowly then slam shut
+            deathRagdoll.eyelidT = Math.min(1, (deathRagdoll.eyelidT || 0) + delta / 1.4);
+            const eyeT = deathRagdoll.eyelidT;
+            const eyeH = eyeT * eyeT * eyeT * 54; // 0 → 54vh (slight past-center to fully seal)
+            const eyelidTop = document.getElementById('eyelid-top');
+            const eyelidBot = document.getElementById('eyelid-bottom');
+            if (eyelidTop) eyelidTop.style.height = eyeH + 'vh';
+            if (eyelidBot) eyelidBot.style.height = eyeH + 'vh';
         }
         updateRemotePlayers(delta);
         broadcastState(controlsObject, health, activeWeapon);
-        renderer.render(scene, camera);
+        composer.render();
         return;
     }
 
@@ -2815,8 +3360,10 @@ function animate() {
         f.t += delta;
         f.sphere.scale.setScalar(1 + f.t * 28);
         f.mat.opacity = Math.max(0, 0.9 - f.t * 3);
+        if (f.light) f.light.intensity = Math.max(0, f.peakIntensity * (1 - f.t / 0.35));
         if (f.t >= 0.35) {
             scene.remove(f.sphere);
+            if (f.light) scene.remove(f.light);
             f.geo.dispose(); f.mat.dispose();
             grenadeFlashes.splice(i, 1);
         }
@@ -2825,11 +3372,22 @@ function animate() {
     // Muzzle flash timer
     if (muzzleFlashTimer > 0) {
         muzzleFlashTimer -= delta;
+        const flashT = Math.max(0, muzzleFlashTimer / 0.08);
+        const sgLight = camera.getObjectByName('ShotgunMuzzleLight');
+        const pLight  = camera.getObjectByName('PistolMuzzleLight');
+        if (sgLight) sgLight.intensity = flashT * 14;
+        if (pLight)  pLight.intensity  = flashT * 7;
         if (muzzleFlashTimer <= 0) {
-            const pFlash = camera.getObjectByName('PistolMuzzleFlash');
+            const pFlash  = camera.getObjectByName('PistolMuzzleFlash');
+            const pGlow   = camera.getObjectByName('PistolFireGlow');
             const sgFlash = camera.getObjectByName('ShotgunMuzzleFlash');
-            if (pFlash) pFlash.visible = false;
+            const sgGlow  = camera.getObjectByName('ShotgunFireGlow');
+            if (pFlash)  pFlash.visible  = false;
+            if (pGlow)   pGlow.visible   = false;
             if (sgFlash) sgFlash.visible = false;
+            if (sgGlow)  sgGlow.visible  = false;
+            if (pLight)  pLight.intensity  = 0;
+            if (sgLight) sgLight.intensity = 0;
         }
     }
 
@@ -2842,8 +3400,10 @@ function animate() {
                 isPlanting = false;
                 plantTimer = 0;
                 broadcastBombPlantingStop();
-                broadcastBombPlanted(camera.position);
+                broadcastBombPlanted(plantSitePos || camera.position);
                 updateSndProgressBar(false, 0, 0);
+                if (ghostBombBarGroup) ghostBombBarGroup.visible = false;
+                if (plantAutocrouched) { isCrouching = false; plantAutocrouched = false; playRandomCrouch(); }
             }
         } else if (isPlanting) {
             isPlanting = false;
@@ -2851,6 +3411,8 @@ function animate() {
             broadcastBombPlantingStop();
             stopPlantingSound();
             updateSndProgressBar(false, 0, 0);
+            if (ghostBombBarGroup) ghostBombBarGroup.visible = false;
+            if (plantAutocrouched) { isCrouching = false; plantAutocrouched = false; playRandomCrouch(); }
         }
 
         if (isDefusing && myTeam === 'defender' && sndPhase === 'planted' && isNearBomb()) {
@@ -2874,6 +3436,43 @@ function animate() {
                 c4LightMesh.material.emissiveIntensity = c4LightFlashTimer / C4_FLASH_DURATION;
             } else {
                 c4LightMesh.material.emissiveIntensity = 0;
+            }
+        }
+
+        // Ghost bomb preview — follows crosshair via raycast
+        if (ghostBombMesh) {
+            const showGhost = hasBomb && sndPhase === 'active' && isInSite();
+            if (showGhost) {
+                _ghostBombRaycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+                const hits = mapScene ? _ghostBombRaycaster.intersectObject(mapScene, true) : [];
+                let gx, gy, gz;
+                if (hits.length > 0) {
+                    gx = hits[0].point.x;
+                    gy = Math.max(0.18, hits[0].point.y);
+                    gz = hits[0].point.z;
+                } else {
+                    // Fallback: directly below player
+                    gx = camera.position.x;
+                    gy = Math.max(0.18, camera.position.y - 1.9);
+                    gz = camera.position.z;
+                }
+                plantSitePos = new THREE.Vector3(gx, gy, gz);
+                ghostBombMesh.position.set(gx, gy, gz);
+                ghostBombMesh.visible = true;
+                if (isPlanting && ghostBombBarGroup) {
+                    const p = Math.max(0.001, plantTimer / PLANT_DURATION);
+                    ghostBombBarGroup.position.set(gx, gy + 0.28, gz);
+                    ghostBombBarGroup.lookAt(camera.position);
+                    ghostBombBarFill.scale.x = p;
+                    ghostBombBarFill.position.x = -0.2 * (1 - p);
+                    ghostBombBarGroup.visible = true;
+                } else if (ghostBombBarGroup) {
+                    ghostBombBarGroup.visible = false;
+                }
+            } else {
+                ghostBombMesh.visible = false;
+                plantSitePos = null;
+                if (ghostBombBarGroup) ghostBombBarGroup.visible = false;
             }
         }
 
@@ -2926,7 +3525,7 @@ function animate() {
         }
     });
 
-    renderer.render(scene, camera);
+    composer.render();
 }
 animate();
 
