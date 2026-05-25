@@ -123,7 +123,7 @@ loadingManager.onLoad = function () {
     if (loaderTerminal) {
         const line = document.createElement('div');
         line.className = 'loader-line lt-ready';
-        line.innerHTML = `<span class="lt-arrow">&gt;&gt;&gt;</span> <span class="lt-label">FPAT READY.</span>`;
+        line.innerHTML = `<span class="lt-arrow">&gt;&gt;&gt;</span> <span class="lt-label">FORGE READY.</span>`;
         loaderTerminal.appendChild(line);
         loaderTerminal.scrollTop = loaderTerminal.scrollHeight;
     }

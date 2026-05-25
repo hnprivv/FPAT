@@ -428,4 +428,4 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3000;
-httpServer.listen(PORT, () => console.log(`FPAT server running at http://localhost:${PORT}`));
+httpServer.listen(PORT, () => console.log(`FORGE server running at http://localhost:${PORT}`));
